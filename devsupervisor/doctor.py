@@ -13,7 +13,8 @@ def _check(name, status, detail=""):
 
 
 def run(store):
-    checks = [_home(), _database(store), _lock(store), _default_provider(), _paid_provider()]
+    checks = [_home(), _database(store), _lock(store), _default_provider(), _paid_provider(),
+              _routing(store)]
     checks += _projects(store)
     checks += [_gates(store), _leases(store)]
     return checks
@@ -73,6 +74,33 @@ def _paid_provider():
     return _check("claude adapter", OK if available else WARN,
                   "`claude` found on PATH" if available
                   else "`claude` not on PATH; only the mock provider can run")
+
+
+def _routing(store):
+    """The resolved model routing, and whether critical roles sit at the floor."""
+    from .policy import immutable
+    from .policy.routing import ModelRouter
+    try:
+        router = ModelRouter(store)
+        resolution = router.resolution
+        decisions = router.table()
+    except Exception as exc:                                   # pragma: no cover
+        return _check("model routing", FAIL, str(exc))
+
+    critical = [d for d in decisions if d.critical]
+    below = [d.role for d in critical
+             if d.effort != immutable.ROUTING_FLOOR["effort"]
+             and immutable.EFFORT_LEVELS.index(d.effort)
+             < immutable.EFFORT_LEVELS.index(immutable.ROUTING_FLOOR["effort"])]
+    if below:                                                  # pragma: no cover
+        return _check("model routing", FAIL,
+                      f"critical roles below the floor: {', '.join(below)}")
+    status = OK if resolution.concrete else WARN
+    detail = (f"{resolution.model_id} @ effort {resolution.effort} for all "
+              f"{len(decisions)} roles ({resolution.model_source})")
+    if not resolution.concrete:
+        detail += "; no concrete id discoverable, the alias will be sent"
+    return _check("model routing", status, detail)
 
 
 def _projects(store):

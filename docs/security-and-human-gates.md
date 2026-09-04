@@ -24,6 +24,14 @@ The self-improvement loop can only ever produce candidates against the second.
    an approval.
 9. Stop on ambiguous repository identity rather than guessing.
 10. Require explicit approval for irreversible or destructive actions.
+11. Never route a critical reasoning role below the strongest available Opus
+    model at high effort, and never give one a fallback model.
+12. Both arms of a paired experiment run identically except for the treatment
+    under test.
+13. Only the supervisor creates jobs. A worker may request a subtask; it may not
+    spawn one.
+
+Rules 11–13 are detailed in [model routing](model-routing.md).
 
 ## Risk levels and review routing
 

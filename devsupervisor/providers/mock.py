@@ -35,7 +35,8 @@ class MockProvider(Provider):
     def run(self, request):
         self.calls.append(request)
         self.record.append({"job_id": request.job_id, "role": request.role,
-                            "session_id": request.session_id, "prompt": request.prompt})
+                            "session_id": request.session_id, "prompt": request.prompt,
+                            "model": request.model, "effort": request.effort})
         payload = self._next(request)
         if payload is None:
             return RunOutcome(status=RUN_FAILED, error=f"no scripted result for {request.job_id}")
@@ -46,6 +47,7 @@ class MockProvider(Provider):
         return RunOutcome(
             status=RUN_SUCCEEDED, result=result, session_id=session_id,
             tokens_in=1000, tokens_out=500, cost_usd=0.0, exit_code=0,
+            model_resolved=request.model,
         )
 
     def _next(self, request):

@@ -70,10 +70,32 @@ class ClaudeCLIProvider(Provider):
         argv = [self.binary, "-p", request.prompt, "--output-format", "json"]
         if request.session_id:
             argv += ["--resume", request.session_id]
-        if self.model or request.model:
+        if request.model or self.model:
             argv += ["--model", request.model or self.model]
+        if request.effort:
+            argv += ["--effort", request.effort]
+        budget = request.max_budget_usd
+        if budget:
+            argv += ["--max-budget-usd", str(budget)]
+        if request.tools:
+            argv += ["--allowedTools", *request.tools]
+        # Only ever when the caller asked for one. A fallback model silently
+        # answers a question with a weaker model than the one that was chosen.
+        if request.fallback_model:
+            argv += ["--fallback-model", request.fallback_model]
         argv.extend(self.extra_args)
         return argv
+
+    @staticmethod
+    def resolved_model(envelope):
+        """The concrete model the provider says it used, however it reports it."""
+        usage = envelope.get("modelUsage")
+        if isinstance(usage, dict) and usage:
+            return sorted(usage)[0]
+        for key in ("model", "model_id"):
+            if envelope.get(key):
+                return str(envelope[key])
+        return None
 
     def run(self, request):
         self.preflight()
@@ -108,11 +130,12 @@ class ClaudeCLIProvider(Provider):
             result = self.extract_result(text)
         except InvalidResult as exc:
             return RunOutcome(status=RUN_FAILED, error=str(exc),
-                              session_id=envelope.get("session_id"), cost_usd=cost)
+                              session_id=envelope.get("session_id"), cost_usd=cost,
+                              model_resolved=self.resolved_model(envelope))
         return RunOutcome(
             status=RUN_SUCCEEDED, result=result, session_id=envelope.get("session_id"),
             tokens_in=usage.get("input_tokens"), tokens_out=usage.get("output_tokens"),
-            cost_usd=cost, exit_code=0,
+            cost_usd=cost, exit_code=0, model_resolved=self.resolved_model(envelope),
         )
 
     @staticmethod

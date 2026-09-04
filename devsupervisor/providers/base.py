@@ -30,6 +30,10 @@ class RunRequest:
     workdir: str = None
     session_id: str = None
     model: str = None
+    effort: str = None
+    fallback_model: str = None
+    max_budget_usd: float = None
+    tools: tuple = ()
     timeout_s: int = 900
     attempt: int = 1
     metadata: dict = field(default_factory=dict)
@@ -46,6 +50,7 @@ class RunOutcome:
     transcript_path: str = None
     exit_code: int = None
     error: str = None
+    model_resolved: str = None
 
     @property
     def succeeded(self):

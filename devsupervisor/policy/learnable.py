@@ -37,6 +37,10 @@ def _guard_name(name, kind):
 def propose(store, name, kind, body, rationale="", evidence=None):
     """Record a candidate policy. Adoption is a separate, named act."""
     _guard_name(name, kind)
+    if kind == "model_choice":
+        # Refuse at proposal time, so a downgrade never reaches a reviewer
+        # looking like an ordinary optimisation.
+        immutable.check_routing_policy(body)
     row = db.one(store.conn, "SELECT MAX(version) AS v FROM policies WHERE name = ?", (name,))
     version = (row["v"] or 0) + 1
     policy_id = ids.new_id("pol")

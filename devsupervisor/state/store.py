@@ -17,7 +17,7 @@ _JSON_COLUMNS = {
     "goals": ("acceptance_criteria",),
     "jobs": ("acceptance_criteria", "blockers", "metadata"),
     "events": ("payload",),
-    "runs": ("result",),
+    "runs": ("result", "tools"),
     "artifacts": ("metadata",),
     "policies": ("body", "evidence"),
 }
@@ -26,7 +26,7 @@ _JOB_WRITABLE = frozenset(
     """priority risk repo worktree base_sha branch scope non_goals
     acceptance_criteria output_contract review_policy attempt max_attempts
     revision_count max_revisions revision_of reviews_job_id lands_job_id
-    provider model session_id session_policy result_sha blockers metadata
+    provider model effort session_id session_policy result_sha blockers metadata
     plan_id goal_id""".split()
 )
 

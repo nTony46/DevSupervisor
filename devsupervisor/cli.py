@@ -19,6 +19,7 @@ from .memory import curator
 from .memory.store import MemoryStore
 from .planner import Planner
 from .policy import learnable, packs
+from .policy.routing import ModelRouter
 from .providers import resolve as resolve_provider
 from .state import Store, leases, machine
 from .supervisor import Supervisor
@@ -164,6 +165,7 @@ def cmd_job_show(store, args):
     print(f"  goal        {job['goal_id']}")
     print(f"  review      {job['review_policy']}   attempt={job['attempt']} "
           f"revisions={job['revision_count']}/{job['max_revisions']}")
+    print(f"  routing     {job['model'] or '(unrouted)'} @ effort {job['effort'] or '-'}")
     print(f"  branch/base {job['branch']} / {job['base_sha']}")
     print(f"  result sha  {job['result_sha']}")
     print(f"  scope       {job['scope']}")
@@ -304,6 +306,23 @@ def cmd_retrospect(store, args):
     return EXIT_OK
 
 
+def cmd_routing(store, args):
+    router = ModelRouter(store)
+    print(router.render())
+    return EXIT_OK
+
+
+def cmd_runs(store, args):
+    for run in metrics.runs_for(store, args.job_id):
+        print(f"{run['id']}  attempt={run['attempt']}  {run['status']:10} "
+              f"{run['provider']}/{run['model'] or '-'} effort={run['effort'] or '-'}")
+        print(f"    resolved={run['model_resolved'] or '-'}  routing={run['routing_source'] or '-'}"
+              f"  verdict={run['review_outcome'] or '-'}")
+        print(f"    tokens in/out={run['tokens_in'] or 0}/{run['tokens_out'] or 0}  "
+              f"cost=${run['cost_usd'] or 0:.4f}  duration={run['duration_s'] or 0:.1f}s")
+    return EXIT_OK
+
+
 def cmd_policy_list(store, args):
     for policy in learnable.list_policies(store, status=args.status):
         print(f"{policy['id']}  {policy['name']:34} v{policy['version']} "
@@ -433,6 +452,13 @@ def build_parser():
 
     gate_list = subs.add_parser("gates", help="list open human gates")
     gate_list.set_defaults(func=cmd_gates)
+
+    routing = subs.add_parser("routing", help="show the resolved model routing policy")
+    routing.set_defaults(func=cmd_routing)
+
+    runs = subs.add_parser("runs", help="run records for a job")
+    runs.add_argument("job_id")
+    runs.set_defaults(func=cmd_runs)
 
     doctor_cmd = subs.add_parser("doctor", help="check this installation")
     doctor_cmd.set_defaults(func=cmd_doctor)

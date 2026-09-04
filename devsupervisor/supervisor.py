@@ -5,12 +5,13 @@ land, verify, check the goal, update memory and metrics, repeat. Every decision
 here is made from the database, never from conversation history.
 """
 
-from . import gates, metrics
+from . import delegation, gates, metrics
 from .context import ContextCompiler
 from .errors import TransitionGuardFailed
 from .memory import candidates as memory_candidates
 from .planner import Planner
 from .policy.packs import PolicyPack
+from .policy.routing import ModelRouter
 from .providers import MockProvider
 from .results import InvalidResult, WorkerResult
 from .scheduler import Scheduler, _actor
@@ -22,16 +23,18 @@ VERDICT_ROLES = REVIEW_ROLES | {"evaluator"}
 
 class Supervisor:
     def __init__(self, store, provider=None, pack=None, owner="supervisor-1",
-                 dry_run=False, repo_facts=None, concurrency=1):
+                 dry_run=False, repo_facts=None, concurrency=1, router=None):
         self.store = store
         self.pack = pack or PolicyPack()
         self.provider = provider or MockProvider()
+        self.router = router or ModelRouter(store, provider_name=self.provider.name)
         self.compiler = ContextCompiler(store, policy_pack=self.pack)
         self.dry_run = dry_run
         self.owner = owner
         self.scheduler = Scheduler(
             store, self.provider, compiler=self.compiler, owner=owner,
             concurrency=concurrency, repo_facts=repo_facts, dry_run=dry_run,
+            router=self.router,
         )
 
     # --- planning ---------------------------------------------------------
@@ -95,6 +98,8 @@ class Supervisor:
         self.scheduler.record_artifacts(job, result)
         self._record_memory_candidates(job, result)
         self._record_metrics(job, result)
+        # A worker may ask for help. Only the supervisor may create the job.
+        delegation.authorize(self.store, job, result.subtask_requests, pack=self.pack)
 
         if result.status in ("BLOCKED", "NEEDS_HUMAN"):
             return self._park(job, result)
@@ -335,10 +340,17 @@ class Supervisor:
 
     # --- dry run ----------------------------------------------------------
 
+    def fan_out(self, parent_job, specs, actor="supervisor"):
+        """Supervisor-initiated parallel children: experiment arms, independent
+        implementation lanes, research, extra reviewers, specialist QA."""
+        return delegation.fan_out(self.store, parent_job, specs, pack=self.pack,
+                                  actor=actor)
+
     def dry_run_report(self, project_id=None):
         """What the scheduler would do next, with no writes and no provider calls."""
         ready = self.scheduler.candidate_jobs(project_id)
         return {
+            "routing": [d.to_dict() for d in self.router.table()],
             "ready": [self.scheduler.plan_dispatch(job) for job in ready],
             "waiting_human": [
                 {"job_id": job["id"], "role": job["role"],

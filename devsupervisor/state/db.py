@@ -10,7 +10,20 @@ from pathlib import Path
 
 from .. import clock, config
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Columns added after v1. Applied idempotently so an existing runtime root
+# upgrades in place: SQLite has no "ADD COLUMN IF NOT EXISTS", and a failed
+# migration on someone's live state is not an acceptable way to find that out.
+_ADDED_COLUMNS = (
+    ("runs", "model_resolved", "TEXT"),
+    ("runs", "effort", "TEXT"),
+    ("runs", "routing_source", "TEXT"),
+    ("runs", "tools", "TEXT"),
+    ("runs", "max_budget_usd", "REAL"),
+    ("runs", "review_outcome", "TEXT"),
+    ("jobs", "effort", "TEXT"),
+)
 _SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 
 
@@ -28,11 +41,18 @@ def connect(path=None):
     return conn
 
 
+def _columns(conn, table):
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
 def migrate(conn):
-    """Apply the schema. Idempotent: every statement is CREATE ... IF NOT EXISTS."""
+    """Apply the schema, then any additive column migrations. Idempotent."""
     conn.executescript(_SCHEMA_FILE.read_text())
+    for table, column, column_type in _ADDED_COLUMNS:
+        if column not in _columns(conn, table):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     current = conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()["v"]
-    if current is None:
+    if current != SCHEMA_VERSION:
         conn.execute(
             "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
             (SCHEMA_VERSION, clock.now_iso()),

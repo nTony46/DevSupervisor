@@ -5,19 +5,28 @@ raw material the retrospective reads, so it is recorded even when nobody is
 looking at it yet.
 """
 
+import json
+
 from . import clock, ids
 from .state import db
 from .state.store import decode
 
 
-def start_run(store, job, provider, model=None, session_id=None, prompt_version=None):
+def start_run(store, job, provider, model=None, session_id=None, prompt_version=None,
+              routing=None, tools=None):
+    """Open a run row. The routing decision is recorded here, not inferred later:
+    a run whose model and effort are unknown cannot be compared to anything."""
     run_id = ids.new_id("run")
+    routing = routing.to_dict() if hasattr(routing, "to_dict") else (routing or {})
     with db.transaction(store.conn):
         store.conn.execute(
-            "INSERT INTO runs (id, job_id, attempt, role, provider, model, session_id,"
-            " prompt_version, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
-            (run_id, job["id"], job["attempt"], job["role"], provider, model, session_id,
-             prompt_version, clock.now_iso()),
+            "INSERT INTO runs (id, job_id, attempt, role, provider, model, effort,"
+            " routing_source, tools, max_budget_usd, session_id, prompt_version, status,"
+            " started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
+            (run_id, job["id"], job["attempt"], job["role"], provider,
+             model or routing.get("model_id"), routing.get("effort"),
+             routing.get("source"), json.dumps(list(tools or [])),
+             routing.get("max_budget_usd"), session_id, prompt_version, clock.now_iso()),
         )
     return get_run(store, run_id)
 
@@ -28,14 +37,18 @@ def finish_run(store, run_id, outcome):
     ended = clock.now()
     duration = (ended - started).total_seconds()
     payload = outcome.result.to_json() if outcome.result is not None else "{}"
+    verdict = getattr(outcome.result, "verdict", None) if outcome.result else None
     with db.transaction(store.conn):
         store.conn.execute(
             "UPDATE runs SET status = ?, ended_at = ?, duration_s = ?, exit_code = ?,"
             " tokens_in = ?, tokens_out = ?, cost_usd = ?, transcript_path = ?,"
+            " model_resolved = COALESCE(?, model_resolved),"
+            " review_outcome = COALESCE(?, review_outcome),"
             " session_id = COALESCE(?, session_id), result = ? WHERE id = ?",
             (outcome.status, clock.iso(ended), duration, outcome.exit_code,
              outcome.tokens_in, outcome.tokens_out, outcome.cost_usd,
-             outcome.transcript_path, outcome.session_id, payload, run_id),
+             outcome.transcript_path, getattr(outcome, "model_resolved", None),
+             verdict, outcome.session_id, payload, run_id),
         )
     record(store, "run.duration_s", value=duration, job_id=run["job_id"], run_id=run_id)
     if outcome.cost_usd is not None:

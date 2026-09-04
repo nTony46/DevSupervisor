@@ -34,7 +34,19 @@ proves it. A criterion with no test is not met.
 | 27 | Example handoffs imported and deduped | `test_handoff_import.py`, `test_example_dryrun.py::ExampleDryRunTests` |
 | 28 | Example dry run produces a coherent graph | `test_example_dryrun.py::test_the_dry_run_offers_reviews_of_exact_shas` |
 | 29 | no Example product code modified | `test_example_dryrun.py::ExampleDryRunTests._assert_repo_untouched` (HEAD, status, and every ref compared before and after) |
-| 30 | full suite green | `scripts/test.sh` — 206 tests |
+| 30 | full suite green | `scripts/test.sh` — 259 tests |
+
+## Model-routing follow-up
+
+| Requirement | Proven by |
+|---|---|
+| initial policy resolves to Opus at high thinking for every role | `test_model_routing.py::InitialPolicyTests` |
+| the concrete model id is discovered, not hardcoded | `test_model_routing.py::ResolutionTests`, `::test_no_marketing_string_is_hardcoded_in_the_router` |
+| critical roles cannot be silently downgraded | `test_model_routing.py::CriticalRoleFloorTests` |
+| model and thinking are persisted in every run record | `test_model_routing.py::RunRecordTests` |
+| experiment arms cannot diverge in configuration | `test_experiments.py::PairLockTests`, `::PairLockAtDispatchTests` |
+| a worker-requested subtask is created by the supervisor | `test_delegation.py::AuthorizationTests`, `::EndToEndDelegationTests` |
+| a retrospective cannot reach the routing floor | `test_model_routing.py::test_a_retrospective_cannot_reach_the_routing_floor` |
 
 
 ## Non-negotiables for the suite itself

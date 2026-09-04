@@ -5,9 +5,10 @@ means*. Keeping those apart is what lets the dry-run reuse the exact selection
 logic without any risk of side effects.
 """
 
-from . import artifacts, config, gates, metrics
+from . import artifacts, config, experiments, gates, metrics
 from .context import ContextCompiler
 from .errors import LeaseError
+from .policy.routing import ModelRouter
 from .providers import RunRequest
 from .providers.base import RUN_FAILED, RunOutcome
 from .state import leases, machine
@@ -15,9 +16,11 @@ from .state import leases, machine
 
 class Scheduler:
     def __init__(self, store, provider, compiler=None, owner="supervisor-1",
-                 concurrency=1, lease_ttl=900, repo_facts=None, dry_run=False):
+                 concurrency=1, lease_ttl=900, repo_facts=None, dry_run=False,
+                 router=None):
         self.store = store
         self.provider = provider
+        self.router = router or ModelRouter(store, provider_name=provider.name)
         self.compiler = compiler or ContextCompiler(store)
         self.owner = owner
         self.concurrency = concurrency
@@ -58,9 +61,12 @@ class Scheduler:
                      if j.get("reviews_job_id") == job["id"]]
         landing = [j["id"] for j in self.store.list_jobs(project_id=job["project_id"])
                    if j.get("lands_job_id") == job["id"]]
+        routing = self.router.route(job["role"])
         return {
             "job_id": job["id"], "role": job["role"], "risk": job["risk"],
             "review_policy": job["review_policy"],
+            "model": routing.model_id, "effort": routing.effort,
+            "routing_source": routing.source, "critical_role": routing.critical,
             "session_policy": job["session_policy"],
             "session_id": job["session_id"] if job["session_policy"] == "reuse" else None,
             "provider": self.provider.name,
@@ -84,6 +90,13 @@ class Scheduler:
             return None, None
 
         try:
+            # Routing is locked across every arm of an experiment before either
+            # runs, then the pair is checked — so no arm can be dispatched
+            # against a configuration the other one did not get.
+            routing = self.router.route(job["role"])
+            experiments.lock_routing(self.store, job, routing.model_id, routing.effort)
+            experiments.check_pair(self.store, job)
+            job = self.store.get_job(job["id"])
             packet = self.compiler.compile(job, repo_facts=self.repo_facts)
             self.compiler.persist(job, packet)
             prompt = packet.render()
@@ -94,17 +107,22 @@ class Scheduler:
             attempt = job["attempt"] + 1
             self.store.update_job(job["id"], attempt=attempt)
             session_id = job["session_id"] if job["session_policy"] == "reuse" else None
+            tools = job["metadata"].get("tools") or ()
             run = metrics.start_run(self.store, self.store.get_job(job["id"]),
-                                    provider=self.provider.name, model=job["model"],
-                                    session_id=session_id)
+                                    provider=self.provider.name, model=routing.model_id,
+                                    session_id=session_id, routing=routing, tools=tools)
             self.store.transition(job["id"], machine.RUNNING, actor=_actor(job),
                                   reason=f"run {run['id']}")
 
             request = RunRequest(
                 job_id=job["id"], role=job["role"], prompt=prompt,
                 workdir=job["worktree"] or job["repo"], session_id=session_id,
-                model=job["model"], attempt=attempt,
-                metadata={"risk": job["risk"], "goal_id": job["goal_id"]},
+                model=routing.model_id, effort=routing.effort,
+                fallback_model=routing.fallback_model,
+                max_budget_usd=routing.max_budget_usd, tools=tuple(tools),
+                timeout_s=job["metadata"].get("timeout_s", 900), attempt=attempt,
+                metadata={"risk": job["risk"], "goal_id": job["goal_id"],
+                          "routing": routing.to_dict()},
             )
             try:
                 outcome = (self.provider.resume(request) if session_id

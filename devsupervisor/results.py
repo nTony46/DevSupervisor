@@ -26,6 +26,8 @@ class WorkerResult:
     blockers: list = field(default_factory=list)
     artifacts: list = field(default_factory=list)
     memory_candidates: list = field(default_factory=list)
+    # A worker may ask for help. Only the supervisor creates the job.
+    subtask_requests: list = field(default_factory=list)
     metrics: dict = field(default_factory=dict)
     evidence: list = field(default_factory=list)
     result_sha: str = None

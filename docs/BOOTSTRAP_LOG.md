@@ -160,3 +160,25 @@
   no runs, and the Example repository's HEAD, status, and every ref are compared
   before and after.
 - 206 tests green.
+
+## Follow-up — model routing, experiment pair lock, delegation ownership
+
+- Model id and effort are discovered from the local installation
+  (`~/.claude/settings.json` `modelSettings`, then the CLI's own `--effort` help
+  text), never hardcoded. On this machine that resolves to `claude-opus-5` at
+  effort `high`, and the resolution source is recorded on every run.
+- Opening policy routes all fourteen roles to Opus at high effort, mechanical
+  ones included. Critical roles — supervisor, reviewer, specialist, security,
+  evaluator, benchmark — have an immutable floor enforced both at proposal time
+  and at use, and are never given a fallback model.
+- Schema v2 adds `runs.model_resolved/effort/routing_source/tools/
+  max_budget_usd/review_outcome` and `jobs.effort`, applied as idempotent column
+  additions so the live runtime root upgraded in place with all 28 jobs intact.
+- Writing the pair-lock test found a real flaw: routing was stamped on each arm
+  at its own dispatch, leaving the second arm unrouted while the first ran. That
+  reads as divergence, and would let a policy change between dispatches split a
+  pair silently. Routing is now locked across every arm before either runs.
+- Workers return `subtask_requests`; only the supervisor creates jobs. The
+  enforcement is structural — the provider contract has no store handle — and
+  `delegation.py` is the single path from a request to a row.
+- 259 tests green.

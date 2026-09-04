@@ -68,8 +68,14 @@ review*, or *whether a gate is satisfied*. It proposes; the harness disposes.
    packs** that hold project-specific rules outside the generic core.
 7. **`providers/`** — agent runtime abstraction. A deterministic mock provider
    proves the whole system with zero paid calls; a Claude Code adapter runs real
-   work.
-8. **`scheduler.py` / `supervisor.py`** — the outer loop: select ready jobs,
+   work. `providers/discovery.py` resolves the concrete model id and effort
+   vocabulary from the local installation rather than hardcoding either.
+8. **`policy/routing.py`** — which model and how much thinking each role gets.
+   Policy, not orchestration logic: the scheduler asks and complies. Critical
+   roles have an immutable floor. See [model routing](model-routing.md).
+9. **`experiments.py` / `delegation.py`** — the pair lock that keeps A/B arms
+   comparable, and the rule that only the supervisor creates jobs.
+10. **`scheduler.py` / `supervisor.py`** — the outer loop: select ready jobs,
    lease them, dispatch, ingest results, route to review, revise or land,
    verify, evaluate goal completion, update memory and metrics, repeat.
 
@@ -89,6 +95,9 @@ models get stronger. Each component records its justification.
 
 | Component            | Exists because                                                       | Removable when |
 |----------------------|----------------------------------------------------------------------|----------------|
+| Model routing floor  | a cheaper reviewer does not save money, it changes what "approved" means | never |
+| Experiment pair lock | any difference besides the treatment is an alternative explanation   | never          |
+| Supervisor-only spawn| a worker that spawns can review itself and fan out without a budget   | never          |
 | SQLite state         | context windows die; work must not be re-done                        | never          |
 | Job state machine    | "approved" must mean one thing, checkable                            | never          |
 | Leases               | two agents silently solving one job corrupts results                 | never          |
