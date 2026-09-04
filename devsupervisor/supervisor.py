@@ -18,6 +18,9 @@ from .scheduler import Scheduler, _actor
 from .state import leases, machine
 
 REVIEW_ROLES = frozenset({"reviewer", "specialist", "qa", "security"})
+# Landing merges an approved candidate; freezing records one as authoritative
+# without touching the repository. Both close out a candidate's lifecycle.
+CLOSING_ROLES = frozenset({"landing", "freeze"})
 VERDICT_ROLES = REVIEW_ROLES | {"evaluator"}
 
 
@@ -162,7 +165,7 @@ class Supervisor:
     def route(self, job, result):
         if job["role"] in REVIEW_ROLES and job["reviews_job_id"]:
             return self._apply_review(job, result)
-        if job["role"] == "landing" and job["lands_job_id"]:
+        if job["role"] in CLOSING_ROLES and job["lands_job_id"]:
             return self._apply_landing(job, result)
         if job["role"] == "evaluator" and job["reviews_job_id"]:
             return self._apply_evaluation(job, result)
@@ -204,14 +207,18 @@ class Supervisor:
         return self.revise(target, result.blockers)
 
     def _apply_landing(self, landing_job, result):
+        """Close out an approved candidate — by landing it, or by freezing it."""
         target = self.store.require_job(landing_job["lands_job_id"])
+        verb = "frozen" if landing_job["role"] == "freeze" else "landed"
         if target["status"] == machine.LANDING_READY:
             self.store.transition(target["id"], machine.LANDING, actor=_actor(landing_job),
-                                  reason=f"landing by {landing_job['id']}")
-        self.store.transition(target["id"], machine.VERIFIED, actor=_actor(landing_job),
-                              reason=result.summary[:200] or "landed and verified",
-                              fields={"metadata": dict(target["metadata"],
-                                                       landed_sha=result.result_sha)})
+                                  reason=f"{verb} by {landing_job['id']}")
+        self.store.transition(
+            target["id"], machine.VERIFIED, actor=_actor(landing_job),
+            reason=result.summary[:200] or f"{verb} and verified",
+            fields={"metadata": dict(target["metadata"],
+                                     **{f"{verb}_sha": result.result_sha or
+                                        target["result_sha"]})})
         return self._finish(landing_job)
 
     def _apply_evaluation(self, evaluator_job, result):

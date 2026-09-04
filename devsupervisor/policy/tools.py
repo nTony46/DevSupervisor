@@ -36,7 +36,13 @@ LAND = VERIFY + (
     "Bash(git push origin:*)", "Bash(git fetch:*)", "Bash(git tag:*)",
 )
 
+# Freezing records an approved SHA as authoritative. It runs the artifact's own
+# checks and writes nothing to the repository at all — that is the difference
+# between freezing and landing.
+FREEZE = VERIFY
+
 ROLE_PROFILES = {
+    "freeze": FREEZE,
     "reviewer": VERIFY,
     "specialist": VERIFY,
     "security": VERIFY,
@@ -56,7 +62,7 @@ ROLE_PROFILES = {
 # Roles that must not be able to change the tree they are looking at.
 READ_ONLY_ROLES = frozenset({
     "reviewer", "specialist", "security", "evaluator", "qa", "investigator",
-    "researcher", "architect", "planner", "supervisor", "benchmark",
+    "researcher", "architect", "planner", "supervisor", "benchmark", "freeze",
 })
 
 _WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit", "git commit", "git push")

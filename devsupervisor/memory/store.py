@@ -38,7 +38,8 @@ class MemoryStore:
     def path(self, area, slug):
         return self.root / area / f"{slug}.md"
 
-    def write(self, area, title, body, tags=(), source_job=None, slug=None, overwrite=False):
+    def write(self, area, title, body, tags=(), source_job=None, slug=None,
+              overwrite=False, packet_visible=True):
         if area not in config.MEMORY_AREAS:
             raise ValueError(f"unknown memory area {area!r}; expected one of {config.MEMORY_AREAS}")
         if redact.contains_secret(body) or redact.contains_secret(title):
@@ -51,7 +52,8 @@ class MemoryStore:
                 f"{target} already exists; authoritative memory is never silently overwritten"
             )
         target.parent.mkdir(parents=True, exist_ok=True)
-        meta = documents.new_meta(title, area, tags, source_job, project=self.project_id)
+        meta = documents.new_meta(title, area, tags, source_job, project=self.project_id,
+                                  packet_visible=packet_visible)
         target.write_text(documents.render(meta, body))
         return target
 
@@ -72,6 +74,7 @@ class MemoryStore:
             "tags": meta.get("tags", []),
             "source_job": meta.get("source_job"),
             "created": meta.get("created"),
+            "packet_visible": str(meta.get("packet_visible", "true")).lower() != "false",
             "body": body,
         }
 
@@ -86,7 +89,7 @@ class MemoryStore:
                 found.append(self._load(path))
         return found
 
-    def search(self, query_terms, limit=6, areas=None):
+    def search(self, query_terms, limit=6, areas=None, include_hidden=False):
         """Deterministic term-overlap relevance. Ties break on path for stability."""
         wanted = _tokens(" ".join(query_terms))
         if not wanted:
@@ -94,6 +97,8 @@ class MemoryStore:
         scored = []
         for doc in self.list():
             if areas and doc["area"] not in areas:
+                continue
+            if not include_hidden and not doc.get("packet_visible", True):
                 continue
             score = (
                 _TITLE_WEIGHT * len(wanted & _tokens(doc["title"]))

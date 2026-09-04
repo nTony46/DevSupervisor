@@ -102,3 +102,37 @@ class CandidateTests(HarnessTestCase):
             candidates.adopt(self.project["id"], name, actor="tony")
         self.assertEqual(self.memory.read("lessons", "same-title")["body"].strip(),
                          "authoritative body")
+
+
+class PacketVisibilityTests(HarnessTestCase):
+    """Some memory is for humans and planners, not for a worker doing today's job."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project()
+        self.memory = MemoryStore(self.project["id"])
+
+    def test_hidden_memory_is_stored_but_excluded_from_search(self):
+        self.memory.write("product", "Current retrieval goal",
+                          "retrieval routing must stay exact", tags=["retrieval"])
+        self.memory.write("product", "FUTURE do not implement",
+                          "a future retrieval routing product we are not building",
+                          tags=["retrieval"], packet_visible=False)
+
+        stored = {doc["title"] for doc in self.memory.list("product")}
+        self.assertEqual(len(stored), 2)
+        found = [doc["title"] for doc in self.memory.search(["retrieval", "routing"])]
+        self.assertEqual(found, ["Current retrieval goal"])
+        self.assertEqual(len(self.memory.search(["retrieval", "routing"],
+                                                include_hidden=True)), 2)
+
+    def test_a_future_hypothesis_never_reaches_a_worker_packet(self):
+        from devsupervisor.context import ContextCompiler
+        self.memory.write("product", "FUTURE do not implement",
+                          "DO-NOT-BUILD-THIS agent workflow layer",
+                          packet_visible=False)
+        goal = self.store.create_goal(self.project["id"], "Add a workflow step")
+        job = self.store.create_job(self.project["id"], "feature", "build", "workflow",
+                                    goal_id=goal["id"], scope="add a workflow step")
+        rendered = ContextCompiler(self.store).compile(job).render()
+        self.assertNotIn("DO-NOT-BUILD-THIS", rendered)

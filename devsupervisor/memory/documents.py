@@ -44,12 +44,17 @@ def parse(text):
     return meta, ""
 
 
-def new_meta(title, area, tags=(), source_job=None, project=None, extra=None):
+def new_meta(title, area, tags=(), source_job=None, project=None, extra=None,
+             packet_visible=True):
     meta = {
         "title": title,
         "area": area,
         "tags": list(tags),
         "created": clock.now_iso(),
+        # Some memory is for humans and planners, not for a worker doing today's
+        # job. A roadmap hypothesis marked "do not implement" is exactly the kind
+        # of thing that should never appear in a builder's packet.
+        "packet_visible": "true" if packet_visible else "false",
     }
     if project:
         meta["project"] = project

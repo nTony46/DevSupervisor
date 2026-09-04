@@ -26,13 +26,13 @@ POLICY_KIND = "model_choice"
 ROUTED_ROLES = (
     "supervisor", "planner", "architect", "build", "reviewer", "specialist",
     "security", "benchmark", "evaluator", "researcher", "investigator", "qa",
-    "landing", "operator",
+    "landing", "freeze", "operator",
 )
 
 # Roles whose work is mechanical rather than judgment-heavy. They are routed to
 # Opus/high anyway for now; the distinction exists so a retrospective has a
 # category to propose against.
-MECHANICAL_ROLES = frozenset({"landing", "qa", "operator"})
+MECHANICAL_ROLES = frozenset({"landing", "freeze", "qa", "operator"})
 
 DEFAULT_POLICY = {
     "default": {"tier": "opus", "effort": "high", "fallback_model": None},
