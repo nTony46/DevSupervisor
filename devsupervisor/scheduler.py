@@ -169,6 +169,14 @@ class Scheduler:
                                    value=left_behind, job_id=job["id"], run_id=run["id"])
 
             metrics.finish_run(self.store, run["id"], outcome)
+            if getattr(outcome, "raw_text", None):
+                # Keep the unusable answer so the next attempt can be aimed at
+                # what actually went wrong rather than guessed at.
+                artifacts.write(self.store, job["project_id"], job["id"],
+                                f"unstructured-attempt-{job['attempt'] + 1}.md",
+                                outcome.raw_text, "transcript",
+                                summary=f"worker output that failed the result contract: "
+                                        f"{(outcome.error or '')[:120]}")
             if outcome.session_id:
                 self.store.update_job(job["id"], session_id=outcome.session_id)
             return self.store.get_job(job["id"]), outcome

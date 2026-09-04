@@ -61,6 +61,10 @@ class RunOutcome:
     # asked to run is not a worker that found nothing wrong.
     permission_denials: list = field(default_factory=list)
     turns: int = None
+    # What the worker actually said. Kept only when the structured contract was
+    # not met: a run that cost real money and produced an unreadable answer is
+    # undiagnosable without it.
+    raw_text: str = None
 
     @property
     def succeeded(self):

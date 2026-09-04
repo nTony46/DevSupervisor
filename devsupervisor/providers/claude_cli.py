@@ -234,7 +234,7 @@ class ClaudeCLIProvider(Provider):
                               session_id=envelope.get("session_id"), cost_usd=cost,
                               model_resolved=primary,
                               models_used=self.model_costs(envelope),
-                              permission_denials=denials)
+                              permission_denials=denials, raw_text=text)
         return RunOutcome(
             status=RUN_SUCCEEDED, result=result, session_id=envelope.get("session_id"),
             tokens_in=tokens_in, tokens_out=tokens_out, thinking_tokens=thinking,

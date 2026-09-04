@@ -158,3 +158,26 @@ class WorkerContractTests(HarnessTestCase):
             RunRequest(job_id="R-1", role="reviewer", prompt="p"))
         self.assertEqual(argv[argv.index("--permission-prompts") + 1], "none")
         self.assertIn("--permission-mode", argv)
+
+
+class UnstructuredOutputTests(HarnessTestCase):
+    """A run that cost money and produced an unreadable answer must stay diagnosable."""
+
+    def test_the_raw_answer_is_kept_when_the_contract_is_not_met(self):
+        import json
+        provider = ClaudeCLIProvider(budget_usd=10.0, allow_paid=True)
+        envelope = json.dumps({"result": "I looked at it and it seems fine to me.",
+                               "total_cost_usd": 1.12, "session_id": "s"})
+        outcome = provider._parse(envelope, requested="claude-opus-5")
+        self.assertFalse(outcome.succeeded)
+        self.assertIn("did not emit", outcome.error)
+        self.assertEqual(outcome.raw_text, "I looked at it and it seems fine to me.")
+        self.assertEqual(outcome.cost_usd, 1.12)
+
+    def test_a_valid_result_does_not_hoard_the_transcript(self):
+        import json
+        provider = ClaudeCLIProvider(budget_usd=10.0, allow_paid=True)
+        outcome = provider._parse(json.dumps({"result": RESULT_BLOCK, "total_cost_usd": 0.1}),
+                                  requested="claude-opus-5")
+        self.assertTrue(outcome.succeeded)
+        self.assertIsNone(outcome.raw_text)
