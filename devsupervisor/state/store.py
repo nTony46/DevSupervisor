@@ -104,7 +104,7 @@ class Store:
     # --- goals ------------------------------------------------------------
 
     def create_goal(self, project_id, title, description="", acceptance_criteria=None,
-                    workflow=None, risk="MEDIUM"):
+                    workflow=None, risk=None):
         now = clock.now_iso()
         row = _encode(
             "goals",

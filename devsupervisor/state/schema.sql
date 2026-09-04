@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS goals (
     description         TEXT NOT NULL DEFAULT '',
     acceptance_criteria TEXT NOT NULL DEFAULT '[]',
     workflow            TEXT,
-    risk                TEXT NOT NULL DEFAULT 'MEDIUM',
+    -- NULL means "not stated": risk is classified, not defaulted, so a stated
+    -- level can only ever raise the floor.
+    risk                TEXT,
     status              TEXT NOT NULL DEFAULT 'OPEN',
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL

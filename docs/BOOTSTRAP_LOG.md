@@ -53,3 +53,23 @@
 - A second interpreter rebuilds a worker's packet from artifacts alone with the
   first process's handles closed — the fresh-context handoff proof.
 - 71 tests green.
+
+## Phase 4 — planner, workflows, and policy
+
+- Six workflow templates (feature, bug, refactor, research, experiment,
+  migration). Risk selects which steps survive, and dropping a step rewires the
+  steps that depended on it instead of orphaning them — at LOW risk a feature is
+  build → land → evaluate; at HIGH it gains design and a specialist review.
+- Risk is classified from the words used and the paths touched. A stated level
+  can only raise the floor, never lower it. `goals.risk` is deliberately
+  nullable: a NOT NULL default of MEDIUM silently overrode every classification,
+  which the LOW-risk test caught.
+- Immutable rules are constants with no mutation API; `learnable.propose`
+  refuses any policy name that reaches for one. Learnable policy is versioned and
+  adopted by a named actor.
+- Policy packs are the only place a project name may appear, asserted by a test
+  that greps the core. A test-local pack proves packs are pluggable without
+  touching core.
+- Human gates are rows. A job with an open gate is `WAITING_HUMAN` and cannot be
+  promoted by readiness; every gate on a job must be decided before it resumes.
+- 111 tests green.
