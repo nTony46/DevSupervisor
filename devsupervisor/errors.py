@@ -40,3 +40,12 @@ class HumanGateRequired(DevSupervisorError):
 
 class NotFound(DevSupervisorError):
     """A referenced entity does not exist."""
+
+
+class GracefulExit(BaseException):
+    """Ctrl-C or SIGTERM during a run.
+
+    Deliberately a BaseException: the scheduler converts a worker crash into a
+    failed run, and an interrupt must not be recorded as one. It has to unwind
+    past that handler so the run stops cleanly and stays resumable.
+    """

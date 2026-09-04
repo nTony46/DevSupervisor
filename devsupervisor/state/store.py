@@ -365,10 +365,12 @@ class Store:
     # Jobs waiting on the graph rather than on a person.
     _WAITING_STATES = (machine.PLANNED, machine.PAUSED, machine.REVISION_READY)
 
-    def promote_ready(self, project_id=None, actor="scheduler"):
-        """Waiting jobs whose dependency thresholds are met become READY.
+    def promotable(self, project_id=None):
+        """Waiting jobs whose dependency thresholds are met. Read-only.
 
-        Readiness is computed from state, never from a model's opinion.
+        Readiness is computed from state, never from a model's opinion. This is
+        separate from promote_ready so a dry run can ask the same question
+        without changing any answer.
         """
         sql = (
             f"SELECT * FROM jobs WHERE status IN"
@@ -378,13 +380,16 @@ class Store:
         if project_id:
             sql += " AND project_id = ?"
             params.append(project_id)
-        promoted = []
-        for row in db.all_rows(self.conn, sql + " ORDER BY priority DESC, created_at", params):
-            if self.unmet_dependencies(row["id"]):
-                continue
-            promoted.append(self.transition(
-                row["id"], machine.READY, actor=actor, reason="dependencies satisfied"))
-        return promoted
+        rows = db.all_rows(self.conn, sql + " ORDER BY priority DESC, created_at", params)
+        return [decode("jobs", row) for row in rows if not self.unmet_dependencies(row["id"])]
+
+    def promote_ready(self, project_id=None, actor="scheduler"):
+        """Move every promotable job to READY."""
+        return [
+            self.transition(job["id"], machine.READY, actor=actor,
+                            reason="dependencies satisfied")
+            for job in self.promotable(project_id)
+        ]
 
     # --- transitions ------------------------------------------------------
 

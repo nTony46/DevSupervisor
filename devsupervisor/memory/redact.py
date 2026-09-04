@@ -10,16 +10,30 @@ import re
 
 PLACEHOLDER = "[REDACTED]"
 
-_SENSITIVE_KEY = (
-    r"(?:[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY"
-    r"|CREDENTIAL|AUTH|SESSION_?KEY|CLIENT_?SECRET|DSN)[A-Z0-9_]*)"
-)
+_WORDS = (r"SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY"
+          r"|CREDENTIAL|AUTH|SESSION_?KEY|CLIENT_?SECRET|DSN")
+
+# Upper-case only. Matching case-insensitively turned ordinary identifiers into
+# findings — `tokens_in=1000` in a metrics call is not a credential — and a
+# redactor that rewrites correct code is worse than one that misses a case.
+_SENSITIVE_KEY = rf"(?:[A-Z0-9_]*(?:{_WORDS})[A-Z0-9_]*)"
+
+# Values are never allowed to contain a backtick, so prose that *names* these
+# patterns (`TOKEN=`) is left alone while real assignments are not.
+_VALUE = r"[^\s\"',;`]"
 
 _PATTERNS = (
-    # KEY=value / KEY: value in .env-shaped text
-    (re.compile(rf"(?im)^(\s*(?:export\s+)?{_SENSITIVE_KEY}\s*[:=]\s*)(.+)$"), r"\1" + PLACEHOLDER),
-    # Inline quoted assignment anywhere in a line
-    (re.compile(rf"(?i)\b({_SENSITIVE_KEY})(\s*[:=]\s*)([\"']?)[^\s\"',;]+\3"),
+    # KEY=value / KEY: value at the head of a line, .env-shaped
+    (re.compile(rf"(?m)^(\s*(?:export\s+)?{_SENSITIVE_KEY}\s*[:=]\s*)({_VALUE}.*)$"),
+     r"\1" + PLACEHOLDER),
+    # Upper-case assignment anywhere in a line, with a value long enough to be one
+    (re.compile(rf"\b({_SENSITIVE_KEY})(\s*[:=]\s*)([\"']?){_VALUE}{{8,}}\3"),
+     r"\1\2" + PLACEHOLDER),
+    # Any-case assignment, but only when the value is quoted and long. A
+    # lower-case key is weak evidence, so the value has to carry the weight:
+    # `token="not-mine"` in a lease test is not a credential.
+    (re.compile(rf"(?i)\b([a-z0-9_]*(?:{_WORDS})[a-z0-9_]*)(\s*[:=]\s*)([\"'])"
+                rf"{_VALUE}{{16,}}\3"),
      r"\1\2" + PLACEHOLDER),
     # PEM blocks
     (re.compile(r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"),

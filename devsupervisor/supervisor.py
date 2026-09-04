@@ -337,8 +337,7 @@ class Supervisor:
 
     def dry_run_report(self, project_id=None):
         """What the scheduler would do next, with no writes and no provider calls."""
-        self.store.promote_ready(project_id)
-        ready = self.scheduler.ready_jobs(project_id)
+        ready = self.scheduler.candidate_jobs(project_id)
         return {
             "ready": [self.scheduler.plan_dispatch(job) for job in ready],
             "waiting_human": [

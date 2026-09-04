@@ -93,6 +93,27 @@ def reclaim_expired(store, actor="scheduler"):
     return reclaimed
 
 
+def recover_orphans(store, project_id=None, actor="scheduler"):
+    """Jobs left mid-flight with nobody holding them.
+
+    A lease expiring is one way a worker dies; a process being killed between
+    releasing its lease and recording a result is another. Either way the job is
+    in DISPATCHED or RUNNING with no owner, and it is nobody's work until it is
+    put back.
+    """
+    recovered = []
+    for job in store.list_jobs(project_id, status=[machine.DISPATCHED, machine.RUNNING]):
+        if holder(store, job["id"]):
+            continue
+        store.record_event("job.orphaned", payload={"job_id": job["id"],
+                                                    "status": job["status"]},
+                           job_id=job["id"], project_id=job["project_id"])
+        store.transition(job["id"], machine.READY, actor=actor,
+                         reason="no lease holder; the worker is gone")
+        recovered.append(job["id"])
+    return recovered
+
+
 # --- supervisor single-owner lock -----------------------------------------
 
 

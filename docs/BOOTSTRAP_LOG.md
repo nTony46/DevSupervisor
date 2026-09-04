@@ -110,3 +110,27 @@
   rule, so a well-behaved retrospective and a misbehaving one are equally unable
   to weaken safety. Tested both ways.
 - 153 tests green.
+
+## Phase 7 — CLI and operational hardening
+
+- `devsup` covers init, goal, plan, run, resume, status, jobs, job show, pause,
+  approve/reject, gates, doctor, import-handoffs, memory curate/list/adopt,
+  retrospect, and policy list/adopt. Paid providers need an explicit flag, so
+  no command spends money by accident.
+- Dry-run is genuinely read-only. `promotable()` was split out of
+  `promote_ready()` so a dry run can ask the readiness question without
+  changing the answer, and the test asserts job rows are byte-identical before
+  and after two consecutive reports.
+- `GracefulExit` is a BaseException on purpose: the scheduler converts a worker
+  crash into a failed run, and an interrupt must not be recorded as one. It
+  unwinds past that handler, releasing the job lease and the supervisor lock.
+- Added orphan recovery. A lease expiring is one way a worker dies; being killed
+  between releasing the lease and recording a result is another, and that left
+  jobs stuck in RUNNING with no owner. Found by the interrupt-then-resume test.
+- Tightened the redactor after the repo-hygiene test flagged `tokens_in=1000`.
+  Key matching is now case-sensitive, values may not contain backticks (so prose
+  naming `TOKEN=` is left alone), and lower-case keys need a long quoted value.
+  A redactor that rewrites correct code is worse than one that misses a case.
+- Generic behaviour is proven on `examples/sample_project`, a small non-Example
+  repository the harness knows nothing about.
+- 181 tests green.

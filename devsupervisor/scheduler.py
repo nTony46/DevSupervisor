@@ -30,6 +30,7 @@ class Scheduler:
     def ready_jobs(self, project_id=None, limit=None):
         """Jobs that may run right now: dependencies met, unleased, ungated."""
         leases.reclaim_expired(self.store)
+        leases.recover_orphans(self.store, project_id)
         self.store.promote_ready(project_id)
         selected = []
         for job in self.store.list_jobs(project_id, status=machine.READY):
@@ -41,6 +42,14 @@ class Scheduler:
             if limit and len(selected) >= limit:
                 break
         return selected
+
+    def candidate_jobs(self, project_id=None):
+        """What *would* be ready, without promoting anything. Dry-run safe."""
+        candidates = list(self.store.promotable(project_id))
+        candidates += self.store.list_jobs(project_id, status=machine.READY)
+        return [job for job in candidates
+                if not leases.holder(self.store, job["id"])
+                and not gates.open_gates(self.store, job_id=job["id"])]
 
     def plan_dispatch(self, job):
         """What dispatching this job *would* do. No writes, no provider call."""
