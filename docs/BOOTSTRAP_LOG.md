@@ -73,3 +73,24 @@
 - Human gates are rows. A job with an open gate is `WAITING_HUMAN` and cannot be
   promoted by readiness; every gate on a job must be decided before it resumes.
 - 111 tests green.
+
+## Phase 5 — agent runtime, scheduler, and the review loop
+
+- Provider abstraction with a deterministic mock (every test runs on it) and a
+  Claude Code headless adapter that refuses to run without an explicit opt-in
+  and a budget. The adapter is tested without ever invoking it.
+- Dependency edges gained a `satisfied_by` threshold. A reviewer cannot wait for
+  the thing it reviews to be DONE, so its edge is satisfied at `UNDER_REVIEW`
+  and landing's edge at `LANDING_READY`. This is the change that made the
+  candidate/review/land lifecycle expressible as one DAG.
+- Rejection creates a real revision job carrying exactly the blockers. The
+  rejected attempt is SUPERSEDED, not deleted, and everything that depended on
+  it is repointed — including a *fresh* review job, because a reviewer that has
+  already ruled cannot re-review its own verdict.
+- Approval is recorded with the reviewer's worker identity, so the independence
+  guard has something real to compare against; the test asserts the approving
+  actor is absent from the build job's work actors.
+- Crash proof: the run stops after the reviewer approves, every handle is
+  dropped, and a fresh store resumes at landing — dispatching exactly the
+  landing and evaluator jobs and nothing already done.
+- 140 tests green.

@@ -42,6 +42,13 @@ def decode(table, row):
     return out
 
 
+def _edge(dependency):
+    """Accept either a job id or an (id, satisfied_by) pair."""
+    if isinstance(dependency, (tuple, list)):
+        return dependency[0], dependency[1]
+    return dependency, machine.DONE
+
+
 def _encode(table, values):
     out = dict(values)
     for column in _JSON_COLUMNS.get(table, ()):
@@ -231,10 +238,11 @@ class Store:
                 (identifier, status, now),
             )
             for dependency in depends_on:
+                upstream, threshold = _edge(dependency)
                 self.conn.execute(
-                    "INSERT OR IGNORE INTO job_dependencies (job_id, depends_on_job_id)"
-                    " VALUES (?, ?)",
-                    (identifier, dependency),
+                    "INSERT OR IGNORE INTO job_dependencies (job_id, depends_on_job_id,"
+                    " satisfied_by) VALUES (?, ?, ?)",
+                    (identifier, upstream, threshold),
                 )
         return self.get_job(identifier)
 
@@ -280,14 +288,48 @@ class Store:
 
     # --- dependencies -----------------------------------------------------
 
-    def add_dependency(self, job_id, depends_on_job_id):
+    def add_dependency(self, job_id, depends_on_job_id, satisfied_by=machine.DONE):
         if job_id == depends_on_job_id:
             raise ValueError("a job cannot depend on itself")
         with db.transaction(self.conn):
             self.conn.execute(
-                "INSERT OR IGNORE INTO job_dependencies (job_id, depends_on_job_id) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO job_dependencies (job_id, depends_on_job_id,"
+                " satisfied_by) VALUES (?, ?, ?)",
+                (job_id, depends_on_job_id, satisfied_by),
+            )
+
+    def remove_dependency(self, job_id, depends_on_job_id):
+        with db.transaction(self.conn):
+            self.conn.execute(
+                "DELETE FROM job_dependencies WHERE job_id = ? AND depends_on_job_id = ?",
                 (job_id, depends_on_job_id),
             )
+
+    def repoint_dependents(self, old_job_id, new_job_id):
+        """Move every edge that pointed at a superseded job onto its replacement."""
+        moved = []
+        for row in db.all_rows(
+            self.conn,
+            "SELECT job_id, satisfied_by FROM job_dependencies WHERE depends_on_job_id = ?",
+            (old_job_id,),
+        ):
+            if row["job_id"] == new_job_id:
+                continue
+            self.remove_dependency(row["job_id"], old_job_id)
+            self.add_dependency(row["job_id"], new_job_id, satisfied_by=row["satisfied_by"])
+            moved.append(row["job_id"])
+        return moved
+
+    def dependency_edges(self, job_id):
+        return [
+            {"depends_on": r["depends_on_job_id"], "satisfied_by": r["satisfied_by"]}
+            for r in db.all_rows(
+                self.conn,
+                "SELECT depends_on_job_id, satisfied_by FROM job_dependencies"
+                " WHERE job_id = ? ORDER BY 1",
+                (job_id,),
+            )
+        ]
 
     def dependencies(self, job_id):
         return [
@@ -310,37 +352,38 @@ class Store:
         ]
 
     def unmet_dependencies(self, job_id):
-        return [
-            r["depends_on_job_id"]
-            for r in db.all_rows(
-                self.conn,
-                "SELECT d.depends_on_job_id FROM job_dependencies d"
-                " JOIN jobs j ON j.id = d.depends_on_job_id"
-                " WHERE d.job_id = ? AND j.status != 'DONE' ORDER BY 1",
-                (job_id,),
-            )
-        ]
+        """Edges whose upstream has not yet reached the threshold this edge needs."""
+        unmet = []
+        for edge in self.dependency_edges(job_id):
+            upstream = self.get_job(edge["depends_on"])
+            if upstream is None:
+                continue
+            if not machine.reached(upstream["status"], edge["satisfied_by"]):
+                unmet.append(edge["depends_on"])
+        return unmet
+
+    # Jobs waiting on the graph rather than on a person.
+    _WAITING_STATES = (machine.PLANNED, machine.PAUSED, machine.REVISION_READY)
 
     def promote_ready(self, project_id=None, actor="scheduler"):
-        """PLANNED jobs whose dependencies are all DONE become READY.
+        """Waiting jobs whose dependency thresholds are met become READY.
 
-        Readiness is a SQL question, never a model's opinion.
+        Readiness is computed from state, never from a model's opinion.
         """
         sql = (
-            "SELECT * FROM jobs j WHERE j.status = 'PLANNED'"
-            " AND NOT EXISTS (SELECT 1 FROM job_dependencies d JOIN jobs dj"
-            "   ON dj.id = d.depends_on_job_id"
-            "   WHERE d.job_id = j.id AND dj.status != 'DONE')"
+            f"SELECT * FROM jobs WHERE status IN"
+            f" ({', '.join('?' * len(self._WAITING_STATES))})"
         )
-        params = []
+        params = list(self._WAITING_STATES)
         if project_id:
-            sql += " AND j.project_id = ?"
+            sql += " AND project_id = ?"
             params.append(project_id)
         promoted = []
         for row in db.all_rows(self.conn, sql + " ORDER BY priority DESC, created_at", params):
-            promoted.append(
-                self.transition(row["id"], machine.READY, actor=actor, reason="dependencies satisfied")
-            )
+            if self.unmet_dependencies(row["id"]):
+                continue
+            promoted.append(self.transition(
+                row["id"], machine.READY, actor=actor, reason="dependencies satisfied"))
         return promoted
 
     # --- transitions ------------------------------------------------------
@@ -395,7 +438,10 @@ class Store:
 
     def _run_guards(self, job, to_status, actor):
         guard = machine.GUARDED.get(to_status)
-        if guard == "approval":
+        if guard == "done_from_approved":
+            if job["status"] == machine.APPROVED:
+                machine.guard_done_from_approved(job)
+        elif guard == "approval":
             machine.guard_approval(job, actor, self.work_actors(job["id"]))
         elif guard == "landing":
             machine.guard_landing(job)

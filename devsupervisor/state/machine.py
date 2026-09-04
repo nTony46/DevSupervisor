@@ -32,6 +32,24 @@ WAITING_HUMAN = "WAITING_HUMAN"
 PAUSED = "PAUSED"
 
 TERMINAL = frozenset({DONE, CANCELLED, SUPERSEDED, DUPLICATE})
+
+# The main path, in order. Used to decide whether a dependency edge is satisfied:
+# "upstream has reached at least X". Off-path states rank below everything.
+PROGRESS = (
+    PLANNED, READY, DISPATCHED, RUNNING, WORK_COMPLETE, UNDER_REVIEW, APPROVED,
+    LANDING_READY, LANDING, VERIFIED, EVALUATED, DONE,
+)
+
+# Only this role produces something that can be landed. Everything else is done
+# when it is approved.
+LANDABLE_ROLES = frozenset({"build"})
+
+
+def reached(status, target):
+    """True when `status` is at or past `target` on the main path."""
+    if status not in PROGRESS or target not in PROGRESS:
+        return False
+    return PROGRESS.index(status) >= PROGRESS.index(target)
 TERMINAL_SUCCESS = frozenset({DONE})
 ACTIVE = frozenset({DISPATCHED, RUNNING, LANDING})
 
@@ -49,7 +67,7 @@ LEGAL = {
     UNDER_REVIEW: {APPROVED, REJECTED} | _ESCAPES,
     REJECTED: {REVISION_READY} | _ESCAPES,
     REVISION_READY: {READY} | _ESCAPES,
-    APPROVED: {LANDING_READY} | _ESCAPES,
+    APPROVED: {LANDING_READY, DONE} | _ESCAPES,
     LANDING_READY: {LANDING} | _ESCAPES,
     LANDING: {VERIFIED} | _ESCAPES,
     VERIFIED: {EVALUATED} | _ESCAPES,
@@ -108,6 +126,15 @@ def guard_approval(job, actor, work_actors):
         )
 
 
+def guard_done_from_approved(job):
+    """A job with something to land must go through landing, not around it."""
+    if job["role"] in LANDABLE_ROLES:
+        raise TransitionGuardFailed(
+            f"job {job['id']}: role {job['role']!r} produces a landable candidate; "
+            f"it must pass through LANDING_READY rather than closing at APPROVED"
+        )
+
+
 def guard_landing(job):
     """Landing needs an identified candidate to land."""
     if not job["result_sha"]:
@@ -129,4 +156,5 @@ GUARDED = {
     APPROVED: "approval",
     LANDING: "landing",
     REVISION_READY: "revision",
+    DONE: "done_from_approved",
 }

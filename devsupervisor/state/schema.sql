@@ -86,6 +86,9 @@ CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id);
 CREATE TABLE IF NOT EXISTS job_dependencies (
     job_id             TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     depends_on_job_id  TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    -- How far upstream must get before this edge is satisfied. A reviewer waits
+    -- for UNDER_REVIEW, not DONE: the thing it reviews cannot finish first.
+    satisfied_by       TEXT NOT NULL DEFAULT 'DONE',
     PRIMARY KEY (job_id, depends_on_job_id)
 );
 

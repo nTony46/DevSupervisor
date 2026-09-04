@@ -11,6 +11,20 @@ from ..policy.packs import PolicyPack
 from ..state import machine
 from . import workflows
 
+# A reviewer cannot wait for the thing it reviews to finish, so its dependency
+# edge is satisfied earlier than DONE.
+_EDGE_THRESHOLDS = {
+    ("review", "build"): machine.UNDER_REVIEW,
+    ("specialist", "build"): machine.UNDER_REVIEW,
+    ("equivalence", "build"): machine.WORK_COMPLETE,
+    ("validate", "build"): machine.WORK_COMPLETE,
+    ("land", "build"): machine.LANDING_READY,
+}
+
+# Steps whose job acts on the build job rather than producing its own candidate.
+_REVIEWS_BUILD = ("review", "specialist", "equivalence", "validate", "evaluate")
+
+
 _WORKFLOW_HINTS = (
     (workflows.BUG, ("bug", "fix", "defect", "regression", "broken", "crash", "fails")),
     (workflows.REFACTOR, ("refactor", "restructure", "clean up", "extract", "rename")),
@@ -55,7 +69,11 @@ class Planner:
             job = self.store.create_job(
                 goal["project_id"], workflow, step.role, subject,
                 goal_id=goal["id"], plan_id=plan["id"],
-                depends_on=[created[key]["id"] for key in depends if key in created],
+                depends_on=[
+                    (created[key]["id"],
+                     _EDGE_THRESHOLDS.get((step.key, key), machine.DONE))
+                    for key in depends if key in created
+                ],
                 risk=level,
                 review_policy=step.review_policy or default_policy,
                 scope=step.scope,
@@ -72,6 +90,7 @@ class Planner:
             created[step.key] = job
             opened_gates.extend(self._gates_for_step(goal, job, step, level, text))
 
+        self._wire_targets(created)
         self.store.set_goal_status(goal["id"], "PLANNED")
         self.store.record_event(
             "plan.created",
@@ -79,8 +98,20 @@ class Planner:
              "risk": level, "jobs": [j["id"] for j in created.values()]},
             project_id=goal["project_id"],
         )
-        return {"plan": plan, "jobs": list(created.values()), "risk": level,
+        jobs = [self.store.get_job(job["id"]) for job in created.values()]
+        return {"plan": plan, "jobs": jobs, "risk": level,
                 "workflow": workflow, "gates": opened_gates}
+
+    def _wire_targets(self, created):
+        """Point review/landing jobs at the candidate they act on."""
+        build = created.get("build")
+        if not build:
+            return
+        for key in _REVIEWS_BUILD:
+            if key in created:
+                self.store.update_job(created[key]["id"], reviews_job_id=build["id"])
+        if "land" in created:
+            self.store.update_job(created["land"]["id"], lands_job_id=build["id"])
 
     def _gates_for_step(self, goal, job, step, level, text):
         """CRITICAL work, and anything a pack flags, pauses before it starts."""
