@@ -34,6 +34,7 @@ class RunRequest:
     fallback_model: str = None
     max_budget_usd: float = None
     tools: tuple = ()
+    disallowed_tools: tuple = ()
     permission_mode: str = None
     timeout_s: int = 900
     attempt: int = 1
@@ -56,6 +57,10 @@ class RunOutcome:
     # the runtime uses a small helper alongside the model that did the thinking.
     models_used: dict = field(default_factory=dict)
     thinking_tokens: int = None
+    # Tools the runtime refused. A worker that could not run the checks it was
+    # asked to run is not a worker that found nothing wrong.
+    permission_denials: list = field(default_factory=list)
+    turns: int = None
 
     @property
     def succeeded(self):

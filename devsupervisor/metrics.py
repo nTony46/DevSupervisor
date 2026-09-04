@@ -60,6 +60,11 @@ def finish_run(store, run_id, outcome):
             record(store, name, value=value, job_id=run["job_id"], run_id=run_id)
     # One run bills several models. Recording only the primary would hide the
     # helper models entirely from any later cost analysis.
+    for denial in (getattr(outcome, "permission_denials", None) or []):
+        record(store, "run.permission_denied", text=denial[:200],
+               job_id=run["job_id"], run_id=run_id)
+    if getattr(outcome, "turns", None) is not None:
+        record(store, "run.turns", value=outcome.turns, job_id=run["job_id"], run_id=run_id)
     for model, model_cost in (getattr(outcome, "models_used", None) or {}).items():
         record(store, "run.model_cost", value=model_cost, text=model,
                job_id=run["job_id"], run_id=run_id)

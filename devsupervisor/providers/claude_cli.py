@@ -28,6 +28,20 @@ BINARY = "claude"
 RESULT_FENCE = "```devsupervisor-result"
 
 
+def _denial_summary(denials):
+    """Compress the runtime's denial records to 'tool: what was attempted'."""
+    summary = []
+    for entry in denials or []:
+        if not isinstance(entry, dict):
+            summary.append(str(entry)[:200])
+            continue
+        tool = entry.get("tool_name") or entry.get("tool") or "?"
+        payload = entry.get("tool_input") or entry.get("input") or {}
+        detail = payload.get("command") or payload.get("file_path") or ""
+        summary.append(f"{tool}: {str(detail)[:160]}".strip())
+    return summary
+
+
 class ClaudeCLIProvider(Provider):
     name = "claude-cli"
     is_paid = True
@@ -80,6 +94,8 @@ class ClaudeCLIProvider(Provider):
             argv += ["--max-budget-usd", str(budget)]
         if request.tools:
             argv += ["--allowedTools", *request.tools]
+        if request.disallowed_tools:
+            argv += ["--disallowedTools", *request.disallowed_tools]
         mode = request.permission_mode or self.permission_mode
         if mode:
             argv += ["--permission-mode", mode]
@@ -116,7 +132,11 @@ class ClaudeCLIProvider(Provider):
             "```\n\n"
             "Omit fields that do not apply. A REJECT with no blockers, or a "
             "verdict with no evidence, will be rejected by the harness as an "
-            "invalid result. Do not claim a check passed that you did not run.\n"
+            "invalid result. Do not claim a check passed that you did not run.\n\n"
+            "If one shell command is denied, that is a denial of that command "
+            "form, not of shell access. Try a simpler form — drop environment "
+            "prefixes and pipes, run it from the right directory — before "
+            "concluding you cannot run the project's checks.\n"
         )
 
     @staticmethod
@@ -195,6 +215,7 @@ class ClaudeCLIProvider(Provider):
 
         cost = envelope.get("total_cost_usd") or envelope.get("cost_usd") or 0.0
         self.spent_usd += float(cost)
+        denials = _denial_summary(envelope.get("permission_denials"))
         requested = requested or getattr(self, "_requested_model", None)
         primary = self.resolved_model(envelope, requested)
         tokens_in, tokens_out, thinking = self.token_counts(envelope, primary)
@@ -206,12 +227,14 @@ class ClaudeCLIProvider(Provider):
             return RunOutcome(status=RUN_FAILED, error=str(exc),
                               session_id=envelope.get("session_id"), cost_usd=cost,
                               model_resolved=primary,
-                              models_used=self.model_costs(envelope))
+                              models_used=self.model_costs(envelope),
+                              permission_denials=denials)
         return RunOutcome(
             status=RUN_SUCCEEDED, result=result, session_id=envelope.get("session_id"),
             tokens_in=tokens_in, tokens_out=tokens_out, thinking_tokens=thinking,
             cost_usd=cost, exit_code=0, model_resolved=primary,
             models_used=self.model_costs(envelope),
+            permission_denials=denials, turns=envelope.get("num_turns"),
         )
 
     @staticmethod

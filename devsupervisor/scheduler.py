@@ -5,7 +5,7 @@ means*. Keeping those apart is what lets the dry-run reuse the exact selection
 logic without any risk of side effects.
 """
 
-from . import artifacts, config, experiments, gates, metrics
+from . import artifacts, config, experiments, gates, integrity, metrics
 from .context import ContextCompiler
 from .errors import LeaseError
 from .policy import tools as tool_policy
@@ -123,16 +123,23 @@ class Scheduler:
                 model=routing.model_id, effort=routing.effort,
                 fallback_model=routing.fallback_model,
                 max_budget_usd=routing.max_budget_usd, tools=tools,
+                disallowed_tools=tuple(tool_policy.disallowed_for(job["role"])),
                 permission_mode=job["metadata"].get("permission_mode"),
                 timeout_s=job["metadata"].get("timeout_s", 900), attempt=attempt,
                 metadata={"risk": job["risk"], "goal_id": job["goal_id"],
                           "routing": routing.to_dict()},
             )
+            before = (integrity.snapshot(job["worktree"])
+                      if tool_policy.is_read_only(job["role"]) else None)
             try:
                 outcome = (self.provider.resume(request) if session_id
                            else self.provider.run(request))
             except Exception as exc:                      # a provider crash is a run failure
                 outcome = RunOutcome(status=RUN_FAILED, error=f"{type(exc).__name__}: {exc}")
+            if before is not None:
+                # An allowlist is a hope; this is the guarantee.
+                integrity.assert_unchanged(job["id"], job["role"], before,
+                                           integrity.snapshot(job["worktree"]))
 
             metrics.finish_run(self.store, run["id"], outcome)
             if outcome.session_id:

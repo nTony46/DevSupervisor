@@ -1,10 +1,16 @@
 """Pack registry. Packs are loaded by name; the core never imports one directly."""
 
+import threading
+
 from ...errors import NotFound
 from .base import PolicyPack
 
 _REGISTRY = {}
 _loaded = False
+# Pack loading is lazy, and the parallel dispatcher resolves packs from several
+# threads at once. Setting the flag before the import let a second thread see
+# "already loaded" against an empty registry and fail to find its own project.
+_LOAD_LOCK = threading.Lock()
 
 
 def register(pack_class):
@@ -33,5 +39,8 @@ def _load_builtin():
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    from . import example  # noqa: F401  (self-registers)
+    with _LOAD_LOCK:
+        if _loaded:
+            return
+        from . import example  # noqa: F401  (self-registers)
+        _loaded = True

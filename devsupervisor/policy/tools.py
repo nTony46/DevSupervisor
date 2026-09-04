@@ -18,23 +18,27 @@ INSPECT = (
     "Bash(tail:*)", "Bash(cat:*)",
 )
 
-# Running the project's own checks. Still no source edits.
-VERIFY = INSPECT + (
-    "Bash(cargo test:*)", "Bash(cargo check:*)", "Bash(cargo clippy:*)",
-    "Bash(cargo fmt:*)", "Bash(cargo build:*)", "Bash(cargo deny:*)",
-    "Bash(./scripts/verify.sh:*)", "Bash(python3 -m unittest:*)",
-    "Bash(python3 -m pytest:*)", "Bash(npm test:*)", "Bash(node --test:*)",
-)
+# Running the project's own checks.
+#
+# This one is deliberately broad rather than a list of command prefixes. A
+# prefix entry cannot match `PYTHONPATH=. python3 -m unittest` — a real command
+# a real reviewer needed — and a reviewer that hits one denial tends to conclude
+# it has no shell at all and withhold its verdict. Enumerating every safe
+# invocation is not achievable; verifying the tree did not change is. The
+# guarantee for these roles comes from `integrity.assert_unchanged`, not from
+# hoping this list is complete.
+VERIFY = ("Read", "Grep", "Glob", "Bash")
+
+# Never available to a read-only role, whatever else is allowed.
+DISALLOWED_FOR_READ_ONLY = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
 # Producing a change.
-IMPLEMENT = VERIFY + ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash(git add:*)")
+IMPLEMENT = VERIFY + ("Edit", "Write", "MultiEdit", "NotebookEdit")
 
-# Landing. Explicitly enumerated, and force-push shapes are simply not present.
-LAND = VERIFY + (
-    "Bash(git add:*)", "Bash(git commit:*)", "Bash(git merge --ff-only:*)",
-    "Bash(git switch:*)", "Bash(git checkout:*)", "Bash(git cherry-pick:*)",
-    "Bash(git push origin:*)", "Bash(git fetch:*)", "Bash(git tag:*)",
-)
+# Landing needs to write to the repository, so it gets a shell. What it must not
+# do is enforced by the immutable command check, which refuses force-push and
+# history-rewrite shapes outright.
+LAND = VERIFY
 
 # Freezing records an approved SHA as authoritative. It runs the artifact's own
 # checks and writes nothing to the repository at all — that is the difference
@@ -65,12 +69,17 @@ READ_ONLY_ROLES = frozenset({
     "researcher", "architect", "planner", "supervisor", "benchmark", "freeze",
 })
 
-_WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit", "git commit", "git push")
+_WRITE_TOOLS = DISALLOWED_FOR_READ_ONLY
 
 
 def profile_for(role):
     """The allowlist for a role. Unknown roles get the most restrictive profile."""
     return ROLE_PROFILES.get(role, INSPECT)
+
+
+def disallowed_for(role):
+    """Tools denied outright, regardless of the allowlist."""
+    return DISALLOWED_FOR_READ_ONLY if is_read_only(role) else ()
 
 
 def is_read_only(role):
