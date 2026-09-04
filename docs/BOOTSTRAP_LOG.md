@@ -16,3 +16,19 @@
   machine, context compiler, memory-candidate curation, reviewer independence,
   leases, project policy packs.
 - No Example product code touched.
+
+## Phase 2 — durable state engine
+
+- SQLite schema for projects, goals, plans, jobs, dependencies, transitions,
+  events, runs, provider sessions, artifacts, metrics, human gates, leases,
+  policies, job relations, and the supervisor lock. WAL, foreign keys,
+  `synchronous=FULL`, one transaction per transition.
+- The state machine is a table plus guards, not prose. Guards are the rules the
+  harness must own about the model rather than ask it: review is not skippable
+  when policy requires it, an approver may not appear in the set of actors that
+  did the work, landing needs a candidate SHA, revisions are capped.
+- Readiness is a SQL `NOT EXISTS` over unfinished dependencies. Leases are rows
+  with expiry; reclaiming one writes an event so a near-duplicate execution
+  leaves a trace instead of vanishing.
+- Restart proof runs a second interpreter against the on-disk database.
+- 34 tests green.
