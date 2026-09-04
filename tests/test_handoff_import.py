@@ -194,3 +194,47 @@ class ImportTests(HandoffFixtureTests):
         self.assertEqual(build["metadata"]["imported_from"],
                          ["agent6-beta.md", "agent9-beta-again.md"])
         self.assertEqual(build["metadata"]["claimed_status"], "COMPLETE")
+
+
+class ReimportTests(HandoffFixtureTests):
+    """Importing is not a one-off. Re-running it must not redo finished work."""
+
+    def test_a_second_import_creates_no_duplicate_jobs(self):
+        first = importer.import_jobs(self.store, self.project, self.reconciled(),
+                                     pack=packs.load("generic"))
+        before = len(self.store.list_jobs(self.project["id"]))
+
+        second = importer.import_jobs(self.store, self.project, self.reconciled(),
+                                      pack=packs.load("generic"))
+
+        self.assertEqual(len(self.store.list_jobs(self.project["id"])), before)
+        self.assertEqual(second["review_chains"], [])
+        self.assertTrue(second["already_present"])
+        tracked = {entry["job_id"] for entry in second["already_present"]}
+        self.assertIn(first["review_chains"][0]["build"], tracked)
+
+    def test_a_frozen_artifact_is_not_reproposed_for_review(self):
+        report = importer.import_jobs(self.store, self.project, self.reconciled(),
+                                      pack=packs.load("generic"))
+        build_id = report["review_chains"][0]["build"]
+        build = self.store.get_job(build_id)
+        # Simulate the freeze lane recording its authoritative SHA.
+        self.store.update_job(build_id,
+                              metadata=dict(build["metadata"], frozen_sha=self.beta))
+
+        states = importer.known_states(self.store, self.project["id"])
+        self.assertEqual(states[self.beta], "FROZEN")
+        jobs = reconcile.reconcile(parser.load_all(self.directory), repo=str(self.repo),
+                                   main_ref="origin-main-stand-in", known_states=states)
+        beta = {job.key: job for job in jobs}["branch:feature/beta"]
+        self.assertEqual(beta.classification, "FROZEN")
+
+    def test_landed_work_reads_as_complete_on_reimport(self):
+        report = importer.import_jobs(self.store, self.project, self.reconciled(),
+                                      pack=packs.load("generic"))
+        build_id = report["review_chains"][0]["build"]
+        build = self.store.get_job(build_id)
+        self.store.update_job(build_id,
+                              metadata=dict(build["metadata"], landed_sha=self.beta))
+        states = importer.known_states(self.store, self.project["id"])
+        self.assertEqual(states[self.beta], "COMPLETE")

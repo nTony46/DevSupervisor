@@ -231,7 +231,9 @@ def cmd_import_handoffs(store, args):
     if not handoffs:
         raise DevSupervisorError(f"no handoff documents found in {args.path}")
     jobs = handoff_reconcile.reconcile(
-        handoffs, repo=project["repo_path"] if project else None, main_ref=args.main_ref)
+        handoffs, repo=project["repo_path"] if project else None, main_ref=args.main_ref,
+        known_states=(handoff_importer.known_states(store, project["id"])
+                      if project else None))
     summary = handoff_reconcile.summarize(jobs)
     if args.apply:
         if project is None:
@@ -244,6 +246,10 @@ def cmd_import_handoffs(store, args):
         print(f"  superseded     {len(applied['superseded'])}")
         print(f"  triage         {len(applied['triage'])}")
         print(f"  skipped        {len(applied['skipped'])}")
+        print(f"  already present {len(applied['already_present'])}")
+        for entry in applied["already_present"]:
+            print(f"  already tracked {entry['key']} -> {entry['job_id']} "
+                  f"({entry['status']})")
         for chain in applied["review_chains"]:
             print(f"  {chain['build']} -> {chain['reviewer']} -> {chain['landing']}"
                   f" -> {chain['evaluator']}  (risk {chain['risk']})")

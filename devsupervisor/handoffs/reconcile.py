@@ -16,7 +16,7 @@ from .. import gitfacts, ids
 
 # Handoff status vocabulary mapped to what the supervisor should do next.
 CLASSIFICATIONS = (
-    "COMPLETE", "WAITING_REVIEW", "WAITING_HUMAN", "ACTIVE", "BLOCKED",
+    "COMPLETE", "FROZEN", "WAITING_REVIEW", "WAITING_HUMAN", "ACTIVE", "BLOCKED",
     "PAUSED", "SUPERSEDED", "DUPLICATE", "UNVERIFIED", "UNKNOWN",
 )
 
@@ -48,7 +48,7 @@ def logical_key(handoff):
     return f"task:{ids.slug(handoff.title or handoff.name, max_words=6)}"
 
 
-def reconcile(handoffs, repo=None, main_ref="origin/main"):
+def reconcile(handoffs, repo=None, main_ref="origin/main", known_states=None):
     """Group handoffs into logical jobs and verify their claims against git.
 
     Branch-inventory rows are treated as first-class work. An agent's own header
@@ -79,12 +79,13 @@ def reconcile(handoffs, repo=None, main_ref="origin/main"):
             duplicates=sorted({m.name for m in members if m is not authoritative}
                               - {authoritative.name}),
         )
+        known = (known_states or {}).get(job.head) if job.head else None
         if repo:
             # Check every member's claims, not just the authoritative one: a
             # false claim in a secondary handoff is exactly the thing worth
             # surfacing, and it is invisible if only the best source is checked.
             _verify(job, members, repo, main_ref)
-        job.classification = classify(job)
+        job.classification = known or classify(job)
         jobs.append(job)
     return jobs
 
@@ -150,7 +151,11 @@ def _verify(job, members, repo, main_ref):
 
 
 def classify(job):
-    """What state this work is actually in, preferring git over prose."""
+    """What state this work is actually in, preferring git over prose.
+
+    A caller that already knows the answer — the store, for work it has itself
+    landed or frozen — overrides this.
+    """
     if job.verified.get("merged") is True:
         return "COMPLETE"
     if job.verified.get("landed_by_content") is True:

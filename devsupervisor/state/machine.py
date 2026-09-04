@@ -73,10 +73,15 @@ LEGAL = {
     VERIFIED: {EVALUATED} | _ESCAPES,
     EVALUATED: {DONE, REJECTED} | _ESCAPES,
     DONE: frozenset(),
-    # Recovery states can rejoin the graph where the supervisor left it.
-    BLOCKED: {PLANNED, READY, REVISION_READY, LANDING_READY, CANCELLED, WAITING_HUMAN, SUPERSEDED},
-    FAILED: {PLANNED, READY, REVISION_READY, CANCELLED, BLOCKED, WAITING_HUMAN, SUPERSEDED},
-    PAUSED: {PLANNED, READY, LANDING_READY, CANCELLED, BLOCKED},
+    # Recovery states can rejoin the graph where the supervisor left it. They can
+    # also turn out to be duplicates: reconciliation can discover at any point
+    # that two rows describe one piece of work, and recording that as CANCELLED
+    # or SUPERSEDED would state something different and untrue.
+    BLOCKED: {PLANNED, READY, REVISION_READY, LANDING_READY, CANCELLED, WAITING_HUMAN,
+              SUPERSEDED, DUPLICATE},
+    FAILED: {PLANNED, READY, REVISION_READY, CANCELLED, BLOCKED, WAITING_HUMAN,
+             SUPERSEDED, DUPLICATE},
+    PAUSED: {PLANNED, READY, LANDING_READY, CANCELLED, BLOCKED, SUPERSEDED, DUPLICATE},
     WAITING_HUMAN: {
         PLANNED, READY, REVISION_READY, APPROVED, LANDING_READY, LANDING,
         CANCELLED, BLOCKED, FAILED,

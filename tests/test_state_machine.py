@@ -114,3 +114,35 @@ class GuardTests(HarnessTestCase):
         self.store.transition(job["id"], machine.REJECTED, actor="reviewer-b")
         with self.assertRaises(TransitionGuardFailed):
             self.store.transition(job["id"], machine.REVISION_READY, actor="supervisor")
+
+
+class DuplicateDiscoveryTests(HarnessTestCase):
+    """Reconciliation can find a duplicate at any point, including after a stall."""
+
+    def test_a_blocked_job_can_be_marked_duplicate(self):
+        original = self.make_job(subject="same work")
+        copy = self.store.create_job(original["project_id"], "feature", "build", "same work")
+        self.store.transition(copy["id"], machine.BLOCKED, actor="supervisor")
+
+        self.store.relate(copy["id"], original["id"], "DUPLICATE")
+        marked = self.store.transition(copy["id"], machine.DUPLICATE, actor="supervisor",
+                                       reason=f"duplicate of {original['id']}")
+        self.assertEqual(marked["status"], machine.DUPLICATE)
+        self.assertIsNotNone(self.store.get_job(copy["id"]))
+        self.assertEqual(self.store.get_job(original["id"])["status"], machine.PLANNED)
+
+    def test_a_failed_or_paused_job_can_be_marked_duplicate_too(self):
+        project = self.make_project()
+        for state in (machine.FAILED, machine.PAUSED):
+            job = self.make_job(project=project, subject=f"work {state.lower()}")
+            self.store.transition(job["id"], state, actor="supervisor")
+            self.store.transition(job["id"], machine.DUPLICATE, actor="supervisor")
+            self.assertEqual(self.store.get_job(job["id"])["status"], machine.DUPLICATE)
+
+    def test_duplicate_remains_terminal(self):
+        job = self.make_job()
+        self.store.transition(job["id"], machine.BLOCKED, actor="supervisor")
+        self.store.transition(job["id"], machine.DUPLICATE, actor="supervisor")
+        from devsupervisor.errors import IllegalTransition
+        with self.assertRaises(IllegalTransition):
+            self.store.transition(job["id"], machine.READY, actor="supervisor")

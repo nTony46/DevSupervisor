@@ -6,7 +6,7 @@ the candidate exists, so what remains is a review, a landing, and a goal check �
 not a rebuild.
 """
 
-from .. import config
+from .. import config, ids
 from ..policy import risk as risk_module
 from ..policy.packs import PolicyPack
 from ..state import machine
@@ -22,12 +22,63 @@ DIRECT_STATUS = {
 }
 
 
+def existing_candidates(store, project_id):
+    """Candidates already represented by a job, keyed by (branch, sha).
+
+    Importing is not a one-off. Re-running it after a campaign has landed and
+    frozen things must not manufacture a second copy of work that is already
+    tracked — that is how a supervisor talks itself into redoing finished work.
+    """
+    index = {}
+    for job in store.list_jobs(project_id):
+        metadata = job.get("metadata") or {}
+        for candidate_sha in {job.get("result_sha"), metadata.get("landed_sha"),
+                              metadata.get("frozen_sha")}:
+            if candidate_sha:
+                index[(job.get("branch"), candidate_sha)] = job
+                index[(None, candidate_sha)] = job
+        # Work with no SHA — a handoff that claims a status but names no
+        # artifact — has no natural key, so it carries the one reconciliation
+        # gave it. Without this, unverifiable claims multiply on every import.
+        if metadata.get("logical_key"):
+            index[("logical", metadata["logical_key"])] = job
+        # Jobs imported before logical keys existed have neither key nor SHA.
+        # Their stable id still encodes the subject they were built from, which
+        # is enough to recognise them rather than import them twice.
+        index.setdefault(("id-prefix", _id_prefix(job["id"])), job)
+    return index
+
+
+def _id_prefix(job_id):
+    """BUILD-some-subject-001 -> BUILD-some-subject"""
+    parts = job_id.rsplit("-", 1)
+    return parts[0] if len(parts) == 2 and parts[1].isdigit() else job_id
+
+
+def known_states(store, project_id):
+    """What the store already knows about a candidate, for the reconciler.
+
+    A frozen evaluation artifact is unmerged by SHA forever — that is what
+    freezing means. Without this it reads as "finished but never reviewed" on
+    every future import.
+    """
+    states = {}
+    for job in store.list_jobs(project_id):
+        metadata = job.get("metadata") or {}
+        if metadata.get("frozen_sha"):
+            states[metadata["frozen_sha"]] = "FROZEN"
+        if metadata.get("landed_sha"):
+            states[metadata["landed_sha"]] = "COMPLETE"
+    return states
+
+
 def import_jobs(store, project, logical_jobs, pack=None, actor="handoff-import"):
     """Create jobs for reconciled work. Returns a report of what was imported."""
     pack = pack or PolicyPack()
     config.ensure_project_dirs(project["id"])
     report = {"review_chains": [], "completed": [], "superseded": [],
-              "triage": [], "skipped": []}
+              "triage": [], "skipped": [], "already_present": []}
+    present = existing_candidates(store, project["id"])
 
     for gate in _pack_decisions(store, project, pack):
         report.setdefault("gates", []).append(gate["id"])
@@ -39,6 +90,20 @@ def import_jobs(store, project, logical_jobs, pack=None, actor="handoff-import")
                 "reason": (logical.disagreements[0] if logical.disagreements
                            else "state could not be determined"),
             })
+            continue
+        already = (present.get((logical.branch, logical.head))
+                   or present.get((None, logical.head))
+                   or present.get(("logical", logical.key))
+                   or present.get(("id-prefix",
+                                   f"BUILD-{ids.slug(_subject(logical))}")))
+        if already is not None:
+            report["already_present"].append({
+                "key": logical.key, "job_id": already["id"], "status": already["status"]})
+            continue
+        if logical.classification in ("FROZEN",):
+            report["skipped"].append({
+                "key": logical.key,
+                "reason": f"already frozen as an authoritative evaluation artifact"})
             continue
         if logical.classification == "WAITING_REVIEW":
             report["review_chains"].append(
@@ -85,6 +150,7 @@ def _common_fields(logical, level):
         "base_sha": logical.base,
         "result_sha": logical.head,
         "metadata": {
+            "logical_key": logical.key,
             "imported_from": logical.sources,
             "claimed_status": logical.claimed_status,
             "verified": logical.verified,
