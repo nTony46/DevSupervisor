@@ -32,3 +32,24 @@
   leaves a trace instead of vanishing.
 - Restart proof runs a second interpreter against the on-disk database.
 - 34 tests green.
+
+## Phase 3 — context, memory, and artifacts
+
+- Memory is path-addressed Markdown with dependency-free frontmatter, one topic
+  per file, scoped to a project by construction. Writing over an existing
+  document raises rather than replaces it.
+- Redaction runs at every boundary that could make text durable or send it to a
+  worker — import, memory write, candidate write, artifact write, packet
+  compile — so a bug in one path cannot leak past the others. Memory *refuses*
+  secret-shaped content; candidates *strip* it, because a candidate is exactly
+  where an unreviewed claim belongs.
+- Curation analyses duplicates, conflicts, and stale documents and writes a
+  proposal into `memory-candidates/`. Authoritative memory is byte-identical
+  afterwards; the test asserts that, not just the report.
+- The context compiler builds eight scoped sections and cites every included
+  document by path. Its non-goals are tested: no other project's memory, no
+  transcripts, no builder monologue in a reviewer packet, blockers verbatim in a
+  revision packet.
+- A second interpreter rebuilds a worker's packet from artifacts alone with the
+  first process's handles closed — the fresh-context handoff proof.
+- 71 tests green.
