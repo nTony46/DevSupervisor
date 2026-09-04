@@ -32,6 +32,10 @@ class PolicyPack:
     clean_room_roles = ()
     clean_room_paths = ()
 
+    # Decisions the repository cannot answer, raised as gates on import.
+    # (kind, question, context)
+    open_decisions = ()
+
     def risk_override(self, text="", paths=(), risk=None):
         """Return a risk floor for this subject matter, or None."""
         return None

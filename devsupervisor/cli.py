@@ -11,6 +11,7 @@ import sys
 
 from . import __version__, artifacts, config, doctor, gates, gitfacts, metrics, retrospective
 from .errors import DevSupervisorError, GracefulExit
+from .handoffs import importer as handoff_importer
 from .handoffs import parser as handoff_parser
 from .handoffs import reconcile as handoff_reconcile
 from .memory import candidates as memory_candidates
@@ -229,6 +230,23 @@ def cmd_import_handoffs(store, args):
     jobs = handoff_reconcile.reconcile(
         handoffs, repo=project["repo_path"] if project else None, main_ref=args.main_ref)
     summary = handoff_reconcile.summarize(jobs)
+    if args.apply:
+        if project is None:
+            raise DevSupervisorError("--apply needs --project")
+        applied = handoff_importer.import_jobs(
+            store, project, jobs, pack=packs.load(project["policy_pack"]))
+        print(f"imported into {project['name']}:")
+        print(f"  review chains  {len(applied['review_chains'])}")
+        print(f"  completed      {len(applied['completed'])}")
+        print(f"  superseded     {len(applied['superseded'])}")
+        print(f"  triage         {len(applied['triage'])}")
+        print(f"  skipped        {len(applied['skipped'])}")
+        for chain in applied["review_chains"]:
+            print(f"  {chain['build']} -> {chain['reviewer']} -> {chain['landing']}"
+                  f" -> {chain['evaluator']}  (risk {chain['risk']})")
+        for entry in applied["skipped"]:
+            print(f"  skipped {entry['key']}: {entry['reason']}")
+        return EXIT_OK
     if args.json:
         print(json.dumps({"summary": summary, "jobs": [j.to_dict() for j in jobs]}, indent=2))
         return EXIT_OK
@@ -424,6 +442,8 @@ def build_parser():
     imports.add_argument("--project")
     imports.add_argument("--main-ref", default="origin/main")
     imports.add_argument("--json", action="store_true")
+    imports.add_argument("--apply", action="store_true",
+                         help="create jobs for the reconciled work")
     imports.set_defaults(func=cmd_import_handoffs)
 
     memory = subs.add_parser("memory", help="project memory").add_subparsers(

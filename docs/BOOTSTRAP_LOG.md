@@ -134,3 +134,29 @@
 - Generic behaviour is proven on `examples/sample_project`, a small non-Example
   repository the harness knows nothing about.
 - 181 tests green.
+
+## Phase 8 — Example policy import and dry run
+
+- The Example pack encodes exact-SHA review and landing, frozen-benchmark
+  immutability, the clean-room boundary around oracle and held-out data, the
+  harness-versus-product commit-identity split, correctness-first effectiveness
+  claims, and budget/benchmark gates. Nothing of it is in the core, which a test
+  greps to confirm.
+- The importer reconstructs verifiable work only. Finished-but-unreviewed
+  candidates become review → landing → evaluation chains against their exact
+  SHA; merged work is imported as DONE so it is never proposed again; a claim
+  with no branch and no SHA becomes a BLOCKED triage job rather than an
+  assertion.
+- Two handoff claims were checked rather than believed, and the check found a
+  subtlety worth keeping: `fix/identifier-collision` reads as *not*
+  landed against current `main`, because files it touched changed again in a
+  later commit, and as landed against `b25efad`, the SHA the handoff names.
+  `landed_by_content(..., against=...)` exists for that distinction.
+- Verification now runs over every handoff in a group, not just the most
+  detailed one. A false claim in a secondary document is precisely what is worth
+  surfacing, and it was invisible while only the best source was checked.
+- Dry run over the reconstructed state offers two reviewer jobs, each naming its
+  exact candidate SHA, plus six open human gates. It dispatches nothing, records
+  no runs, and the Example repository's HEAD, status, and every ref are compared
+  before and after.
+- 206 tests green.

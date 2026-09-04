@@ -18,6 +18,15 @@ _BOLD_FIELD = re.compile(r"^\s*[-*]\s*\*\*([A-Za-z][A-Za-z /]*?):?\*\*\s*(.+?)\s
 _BACKTICKED = re.compile(r"`([^`]+)`")
 _HEADING = re.compile(r"^#+\s*(.+?)\s*$")
 
+# A branch-inventory row: | `some/branch` | `sha` | ... |
+# Handoffs list every branch an agent owned this way, and those rows carry work
+# the document's own header fields do not mention.
+_INVENTORY_ROW = re.compile(
+    r"^\s*\|\s*`([A-Za-z0-9._-]+/[A-Za-z0-9._/-]+)`\s*\|\s*`?([0-9a-f]{7,40})`?\s*\|(.*)$")
+
+# "landed by content as `b25efad`" — a claim about where work actually went.
+_LANDED_AS = re.compile(r"landed[^|]{0,40}?as\s+`([0-9a-f]{7,40})`", re.IGNORECASE)
+
 # Values that mean "no value". Handoffs write these where a field is absent.
 _EMPTY_VALUES = ("n/a", "none", "-", "(none)", "unknown", "not applicable", "")
 
@@ -64,8 +73,10 @@ class Handoff:
     merged: bool = None
     shas: list = field(default_factory=list)
     branches: list = field(default_factory=list)
+    inventory: list = field(default_factory=list)
     body: str = ""
     status_text: str = ""
+    landed_as: str = None
 
     def to_dict(self):
         return {k: v for k, v in self.__dict__.items() if k != "body"}
@@ -84,12 +95,17 @@ def _clean(value):
     return cleaned or None
 
 
+_NEGATIVE = re.compile(r"\b(no|false|unmerged|not\s+merged|not\s+yet|never)\b", re.IGNORECASE)
+_POSITIVE = re.compile(r"\b(yes|true|merged|landed)\b", re.IGNORECASE)
+
+
 def _truthy(value):
-    lowered = (value or "").lower()
-    if any(word in lowered for word in ("yes", "true", "merged")) and "not " not in lowered:
-        return True
-    if any(word in lowered for word in ("no", "false", "unmerged", "not merged")):
+    """Read a yes/no cell. Negatives win: "unmerged" contains "merged"."""
+    text = value or ""
+    if _NEGATIVE.search(text):
         return False
+    if _POSITIVE.search(text):
+        return True
     return None
 
 
@@ -113,6 +129,18 @@ def parse_text(text, name="handoff", path=""):
 
         if section.startswith("current status") and line.strip():
             status_lines.append(line.strip())
+
+        inventory = _INVENTORY_ROW.match(line)
+        if inventory and not inventory.group(1).startswith(("origin/", "upstream/")):
+            landed = _LANDED_AS.search(inventory.group(3))
+            handoff.inventory.append({
+                "branch": inventory.group(1),
+                "head": inventory.group(2),
+                "state_text": inventory.group(3).strip(" |"),
+                "landed_as": landed.group(1) if landed else None,
+                "merged": _truthy(inventory.group(3)),
+            })
+            continue
 
         for pattern in (_TABLE_ROW, _BOLD_FIELD):
             match = pattern.match(line)

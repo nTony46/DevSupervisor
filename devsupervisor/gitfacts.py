@@ -71,6 +71,53 @@ def rev_parse(repo, ref):
     return value
 
 
+def changed_paths(repo, sha, base=None):
+    """Files a branch tip changed relative to its merge base with the target."""
+    base = base or merge_base(repo, sha, "HEAD")
+    if not base:
+        return []
+    value, _ = _git(repo, "diff", "--name-only", f"{base}..{sha}")
+    return [line for line in (value or "").splitlines() if line]
+
+
+def merge_base(repo, left, right):
+    value, _ = _git(repo, "merge-base", left, right)
+    return value
+
+
+def landed_by_content(repo, sha, main_ref="origin/main", against=None):
+    """Is this branch's work already in main under a different commit?
+
+    A branch that is not an ancestor of main is usually pending. Sometimes it is
+    historical instead: the same change landed under a different SHA. That is a
+    checkable claim — diff the files the branch touched between its tip and the
+    target — and it must be checked, because re-landing already-landed work is
+    one of the more expensive mistakes available.
+
+    Pass `against` when a handoff names the SHA it landed as. Comparing to a
+    moved `main` gives a false negative: work really was landed content-identical
+    at commit X, and files it touched changed again in commits after X.
+    """
+    target = against or main_ref
+    if not commit_exists(repo, sha):
+        return {"checked": False, "reason": "commit not present"}
+    if is_ancestor(repo, sha, main_ref):
+        return {"checked": True, "landed_by_sha": True, "landed_by_content": True,
+                "compared_against": main_ref}
+    base = merge_base(repo, sha, main_ref)
+    paths = changed_paths(repo, sha, base)
+    if not paths:
+        return {"checked": True, "landed_by_sha": False, "landed_by_content": None,
+                "reason": "branch changed no files against its merge base"}
+    value, error = _git(repo, "diff", "--name-only", sha, target, "--", *paths)
+    if error is not None:
+        return {"checked": False, "reason": error}
+    differing = [line for line in (value or "").splitlines() if line]
+    return {"checked": True, "landed_by_sha": False,
+            "landed_by_content": not differing, "compared_against": target,
+            "paths_touched": len(paths), "paths_still_differing": differing}
+
+
 def worktrees(repo):
     """Every registered worktree, so two jobs are not pointed at the same one."""
     value, _ = _git(repo, "worktree", "list", "--porcelain")

@@ -35,6 +35,7 @@ class LogicalJob:
     verified: dict = field(default_factory=dict)
     disagreements: list = field(default_factory=list)
     claimed_status: str = "UNKNOWN"
+    landed_as: str = None
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -48,10 +49,19 @@ def logical_key(handoff):
 
 
 def reconcile(handoffs, repo=None, main_ref="origin/main"):
-    """Group handoffs into logical jobs and verify their claims against git."""
+    """Group handoffs into logical jobs and verify their claims against git.
+
+    Branch-inventory rows are treated as first-class work. An agent's own header
+    fields name only the lane it was on at the moment it stopped; the inventory
+    table is where the rest of its branches are listed, and some of those are
+    the ones still open.
+    """
     groups = {}
     for handoff in handoffs:
         groups.setdefault(logical_key(handoff), []).append(handoff)
+        for entry in handoff.inventory:
+            groups.setdefault(f"branch:{entry['branch']}", []).append(
+                _inventory_handoff(handoff, entry))
 
     jobs = []
     for key, members in sorted(groups.items()):
@@ -64,14 +74,32 @@ def reconcile(handoffs, repo=None, main_ref="origin/main"):
             base=authoritative.base,
             repo=repo or authoritative.repo,
             claimed_status=authoritative.status,
-            sources=[m.name for m in members],
-            duplicates=[m.name for m in members if m is not authoritative],
+            landed_as=getattr(authoritative, "landed_as", None),
+            sources=sorted({m.name for m in members}),
+            duplicates=sorted({m.name for m in members if m is not authoritative}
+                              - {authoritative.name}),
         )
         if repo:
-            _verify(job, authoritative, repo, main_ref)
+            # Check every member's claims, not just the authoritative one: a
+            # false claim in a secondary handoff is exactly the thing worth
+            # surfacing, and it is invisible if only the best source is checked.
+            _verify(job, members, repo, main_ref)
         job.classification = classify(job)
         jobs.append(job)
     return jobs
+
+
+def _inventory_handoff(source, entry):
+    """A synthetic handoff for one row of a branch-inventory table."""
+    from .parser import Handoff
+    return Handoff(
+        path=source.path, name=source.name,
+        title=f"{entry['branch']} (from {source.name} inventory)",
+        status=source.status, branch=entry["branch"], head=entry["head"],
+        base=source.base, repo=source.repo, merged=entry["merged"],
+        body=entry["state_text"], status_text=entry["state_text"],
+        landed_as=entry["landed_as"],
+    )
 
 
 def _evidence_score(handoff):
@@ -80,8 +108,8 @@ def _evidence_score(handoff):
                                handoff.repo, handoff.worktree) if value)
 
 
-def _verify(job, handoff, repo, main_ref):
-    """Check the claims. Record what git says, and where it disagrees."""
+def _verify(job, members, repo, main_ref):
+    """Check the claims. Record what git says, and where each source disagrees."""
     if not gitfacts.is_repo(repo):
         job.verified = {"repo": False}
         return
@@ -104,10 +132,20 @@ def _verify(job, handoff, repo, main_ref):
             job.disagreements.append(
                 f"commit {job.head[:12]} is not present in {repo}; "
                 f"this work probably belongs to a different repository")
-    if handoff.merged is not None and verified.get("merged") is not None:
-        if handoff.merged != verified["merged"]:
+    if job.head and verified.get("commit_exists") and verified.get("merged") is False:
+        # Unmerged by SHA is not the same as pending. Check whether the same
+        # content already landed under a different commit before proposing work.
+        content = gitfacts.landed_by_content(repo, job.head, main_ref,
+                                             against=job.landed_as)
+        verified["landed_by_content"] = content.get("landed_by_content")
+        verified["content_compared_against"] = content.get("compared_against")
+    for member in members:
+        if member.merged is None or verified.get("merged") is None:
+            continue
+        if member.merged != verified["merged"]:
             job.disagreements.append(
-                f"handoff claims merged={handoff.merged}, git says {verified['merged']}")
+                f"{member.name} claims merged={member.merged}, "
+                f"git says merged={verified['merged']}")
     job.verified = verified
 
 
@@ -115,6 +153,9 @@ def classify(job):
     """What state this work is actually in, preferring git over prose."""
     if job.verified.get("merged") is True:
         return "COMPLETE"
+    if job.verified.get("landed_by_content") is True:
+        # The work is in main under another SHA. Re-landing it would be a defect.
+        return "SUPERSEDED"
     if not job.branch and not job.head:
         # A claim with no branch and no SHA cannot be checked. Saying
         # "waiting for review" would assert something we do not know.
