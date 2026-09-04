@@ -13,7 +13,7 @@ from .state.store import decode
 
 
 def start_run(store, job, provider, model=None, session_id=None, prompt_version=None,
-              routing=None, tools=None):
+              routing=None, tools=None, permission_mode=None, worktree=None):
     """Open a run row. The routing decision is recorded here, not inferred later:
     a run whose model and effort are unknown cannot be compared to anything."""
     run_id = ids.new_id("run")
@@ -21,11 +21,14 @@ def start_run(store, job, provider, model=None, session_id=None, prompt_version=
     with db.transaction(store.conn):
         store.conn.execute(
             "INSERT INTO runs (id, job_id, attempt, role, provider, model, effort,"
-            " routing_source, tools, max_budget_usd, session_id, prompt_version, status,"
-            " started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
+            " routing_source, tools, permission_mode, bypass_permissions, worktree,"
+            " max_budget_usd, session_id, prompt_version, status, started_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?)",
             (run_id, job["id"], job["attempt"], job["role"], provider,
              model or routing.get("model_id"), routing.get("effort"),
              routing.get("source"), json.dumps(list(tools or [])),
+             permission_mode, 1 if permission_mode == "bypassPermissions" else 0,
+             worktree or job.get("worktree"),
              routing.get("max_budget_usd"), session_id, prompt_version, clock.now_iso()),
         )
     return get_run(store, run_id)

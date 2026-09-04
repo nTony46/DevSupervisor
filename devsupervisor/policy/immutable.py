@@ -31,6 +31,12 @@ RULES = (
     "commit, or task body makes the comparison meaningless.",
     "Only the supervisor creates jobs. A worker may request a subtask; it may "
     "not spawn one.",
+    "Permission bypass is autonomy inside a disposable sandbox, never authority. "
+    "It grants no right to land, push, rewrite history, mutate a benchmark, or "
+    "spend outside budget; those are decided before and after the worker runs.",
+    "Landing is bounded by a deterministic contract — an approved exact SHA, a "
+    "target resolved at landing time, and a verified fast-forward — not by what "
+    "tools the landing worker happens to hold.",
 )
 
 # Roles whose judgment the rest of the system is calibrated against. A cheaper

@@ -9,6 +9,7 @@ import json
 import shutil
 import subprocess
 
+from ..policy import permissions as permission_policy
 from ..results import InvalidResult, WorkerResult
 from .base import (
     RUN_FAILED,
@@ -99,6 +100,11 @@ class ClaudeCLIProvider(Provider):
         mode = request.permission_mode or self.permission_mode
         if mode:
             argv += ["--permission-mode", mode]
+        if permission_policy.is_bypass(mode):
+            # Both forms are documented by the installed CLI and compose: the
+            # mode names the intent in a value the CLI itself validates, and the
+            # explicit flag is the one its help text documents for this.
+            argv += ["--dangerously-skip-permissions"]
         # Nobody is sitting at this terminal to answer a permission prompt, and a
         # run that silently waits for one is worse than a run that is denied.
         argv += ["--permission-prompts", "none"]

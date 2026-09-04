@@ -165,7 +165,8 @@ def cmd_job_show(store, args):
     print(f"  goal        {job['goal_id']}")
     print(f"  review      {job['review_policy']}   attempt={job['attempt']} "
           f"revisions={job['revision_count']}/{job['max_revisions']}")
-    print(f"  routing     {job['model'] or '(unrouted)'} @ effort {job['effort'] or '-'}")
+    print(f"  routing     {job['model'] or '(unrouted)'} @ effort {job['effort'] or '-'}"
+          f"  permission={job['permission_mode'] or '-'}")
     print(f"  branch/base {job['branch']} / {job['base_sha']}")
     print(f"  result sha  {job['result_sha']}")
     print(f"  scope       {job['scope']}")
@@ -312,12 +313,30 @@ def cmd_routing(store, args):
     return EXIT_OK
 
 
+def cmd_permissions(store, args):
+    from .policy import permissions
+    print("execution policy (permission mode per role)\n")
+    print(permissions.describe())
+    print("\nbypass grants autonomy inside a disposable worktree. It grants no")
+    print("authority: landing, pushing, history rewrite, benchmark mutation and")
+    print("spend are decided by DevSupervisor before and after the worker runs.")
+    shared = [p["repo_path"] for p in store.list_projects()]
+    if shared:
+        print("\nshared checkouts a bypassed worker will be withheld from:")
+        for path in shared:
+            print(f"  {path}")
+    return EXIT_OK
+
+
 def cmd_runs(store, args):
     for run in metrics.runs_for(store, args.job_id):
         print(f"{run['id']}  attempt={run['attempt']}  {run['status']:10} "
               f"{run['provider']}/{run['model'] or '-'} effort={run['effort'] or '-'}")
         print(f"    resolved={run['model_resolved'] or '-'}  routing={run['routing_source'] or '-'}"
               f"  verdict={run['review_outcome'] or '-'}")
+        print(f"    permission={run['permission_mode'] or '-'} "
+              f"bypass={'yes' if run['bypass_permissions'] else 'no'}  "
+              f"worktree={run['worktree'] or '-'}")
         print(f"    tokens in/out={run['tokens_in'] or 0}/{run['tokens_out'] or 0}  "
               f"cost=${run['cost_usd'] or 0:.4f}  duration={run['duration_s'] or 0:.1f}s")
     return EXIT_OK
@@ -455,6 +474,9 @@ def build_parser():
 
     routing = subs.add_parser("routing", help="show the resolved model routing policy")
     routing.set_defaults(func=cmd_routing)
+
+    perms = subs.add_parser("permissions", help="show the execution policy per role")
+    perms.set_defaults(func=cmd_permissions)
 
     runs = subs.add_parser("runs", help="run records for a job")
     runs.add_argument("job_id")

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .. import clock, config
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Columns added after v1. Applied idempotently so an existing runtime root
 # upgrades in place: SQLite has no "ADD COLUMN IF NOT EXISTS", and a failed
@@ -23,6 +23,10 @@ _ADDED_COLUMNS = (
     ("runs", "max_budget_usd", "REAL"),
     ("runs", "review_outcome", "TEXT"),
     ("jobs", "effort", "TEXT"),
+    ("jobs", "permission_mode", "TEXT"),
+    ("runs", "permission_mode", "TEXT"),
+    ("runs", "bypass_permissions", "INTEGER NOT NULL DEFAULT 0"),
+    ("runs", "worktree", "TEXT"),
 )
 _SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 

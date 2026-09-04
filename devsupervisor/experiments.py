@@ -17,7 +17,7 @@ from .state import machine
 # Everything that must be identical across arms. The task body is included:
 # rewording one arm's prompt is the easiest way to fake a result by accident.
 LOCKED_JOB_FIELDS = (
-    "model", "effort", "risk", "repo", "base_sha", "worktree", "branch",
+    "model", "effort", "permission_mode", "risk", "repo", "base_sha", "branch",
     "scope", "non_goals", "output_contract", "review_policy", "job_type",
 )
 LOCKED_METADATA_FIELDS = ("timeout_s", "tools", "max_budget_usd", "environment")
@@ -89,7 +89,7 @@ def diff_pair(store, pair_id, project_id=None):
     return differences
 
 
-def lock_routing(store, job, model, effort, project_id=None):
+def lock_routing(store, job, model, effort, project_id=None, permission_mode=None):
     """Apply one routing decision to every arm of a pair.
 
     Routing is per role, and both arms share a role, so the decision is the same
@@ -99,17 +99,20 @@ def lock_routing(store, job, model, effort, project_id=None):
     """
     pair_id = pair_id_of(job)
     if not pair_id:
-        store.update_job(job["id"], model=model, effort=effort)
-        return [job["id"]]
+        return []
     updated = []
     for member in pair_members(store, pair_id, project_id or job.get("project_id")):
-        if member["model"] != model or member["effort"] != effort:
-            store.update_job(member["id"], model=model, effort=effort)
+        if (member["model"] != model or member["effort"] != effort
+                or (permission_mode and member["permission_mode"] != permission_mode)):
+            fields = {"model": model, "effort": effort}
+            if permission_mode:
+                fields["permission_mode"] = permission_mode
+            store.update_job(member["id"], **fields)
             updated.append(member["id"])
     if updated:
         store.record_event("experiment.routing_locked",
                            {"pair_id": pair_id, "model": model, "effort": effort,
-                            "arms": updated},
+                            "permission_mode": permission_mode, "arms": updated},
                            project_id=job.get("project_id"), job_id=job["id"])
     return updated
 

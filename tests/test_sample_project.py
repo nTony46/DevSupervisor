@@ -37,9 +37,11 @@ class SampleProjectTests(HarnessTestCase):
         goal = self.store.create_goal(
             self.project["id"], "Fix the crash when averaging an empty list",
             acceptance_criteria=["average([]) does not raise"])
+        head = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
         provider = MockProvider(script={
             "build": completed("returned 0.0 for an empty sequence",
-                               result_sha="sha-fix",
+                               result_sha=head,
                                metrics={"modules_touched": 1},
                                evidence=["python -m unittest discover: 3 passed"]),
             "reviewer": approve("regression test fails without the fix"),

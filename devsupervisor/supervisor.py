@@ -5,7 +5,7 @@ land, verify, check the goal, update memory and metrics, repeat. Every decision
 here is made from the database, never from conversation history.
 """
 
-from . import delegation, gates, metrics
+from . import delegation, gates, landing, metrics
 from .context import ContextCompiler
 from .errors import TransitionGuardFailed
 from .memory import candidates as memory_candidates
@@ -26,7 +26,8 @@ VERDICT_ROLES = REVIEW_ROLES | {"evaluator"}
 
 class Supervisor:
     def __init__(self, store, provider=None, pack=None, owner="supervisor-1",
-                 dry_run=False, repo_facts=None, concurrency=1, router=None):
+                 dry_run=False, repo_facts=None, concurrency=1, router=None,
+                 shared_paths=None, permission_policy_body=None):
         self.store = store
         self.pack = pack or PolicyPack()
         self.provider = provider or MockProvider()
@@ -37,7 +38,11 @@ class Supervisor:
         self.scheduler = Scheduler(
             store, self.provider, compiler=self.compiler, owner=owner,
             concurrency=concurrency, repo_facts=repo_facts, dry_run=dry_run,
-            router=self.router,
+            router=self.router, permission_policy_body=permission_policy_body,
+            # Every registered project's own checkout is shared state. A bypassed
+            # worker pointed at one of them is a worker in the wrong place.
+            shared_paths=(shared_paths if shared_paths is not None
+                          else tuple(p["repo_path"] for p in store.list_projects())),
         )
 
     # --- planning ---------------------------------------------------------
@@ -207,9 +212,19 @@ class Supervisor:
         return self.revise(target, result.blockers)
 
     def _apply_landing(self, landing_job, result):
-        """Close out an approved candidate — by landing it, or by freezing it."""
+        """Close out an approved candidate — by landing it, or by freezing it.
+
+        The worker's report is not the evidence. For a landing, git is: the
+        approved SHA must now be in the target, the target's previous tip must
+        still be an ancestor of it, and the patch must be the reviewed one.
+        """
         target = self.store.require_job(landing_job["lands_job_id"])
         verb = "frozen" if landing_job["role"] == "freeze" else "landed"
+        if landing_job["role"] == "landing":
+            findings = landing.verify(self.store, landing_job, result.result_sha)
+            metrics.record(self.store, "landing.verified",
+                           value=1 if findings.get("checked") else 0,
+                           text=findings.get("reason"), job_id=landing_job["id"])
         if target["status"] == machine.LANDING_READY:
             self.store.transition(target["id"], machine.LANDING, actor=_actor(landing_job),
                                   reason=f"{verb} by {landing_job['id']}")

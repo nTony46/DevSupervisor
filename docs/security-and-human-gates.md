@@ -31,7 +31,12 @@ The self-improvement loop can only ever produce candidates against the second.
 13. Only the supervisor creates jobs. A worker may request a subtask; it may not
     spawn one.
 
-Rules 11–13 are detailed in [model routing](model-routing.md).
+14. Permission bypass is autonomy inside a disposable sandbox, never authority.
+15. Landing is bounded by a deterministic contract, not by the tools the landing
+    worker happens to hold.
+
+Rules 11–13 are detailed in [model routing](model-routing.md); 14–15 in
+[execution policy](execution-policy.md).
 
 ## Risk levels and review routing
 

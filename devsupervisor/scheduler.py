@@ -5,9 +5,10 @@ means*. Keeping those apart is what lets the dry-run reuse the exact selection
 logic without any risk of side effects.
 """
 
-from . import artifacts, config, experiments, gates, integrity, metrics
+from . import artifacts, config, experiments, gates, integrity, landing, metrics
 from .context import ContextCompiler
 from .errors import LeaseError
+from .policy import permissions as permission_policy
 from .policy import tools as tool_policy
 from .policy.routing import ModelRouter
 from .providers import RunRequest
@@ -18,7 +19,7 @@ from .state import leases, machine
 class Scheduler:
     def __init__(self, store, provider, compiler=None, owner="supervisor-1",
                  concurrency=1, lease_ttl=900, repo_facts=None, dry_run=False,
-                 router=None):
+                 router=None, permission_policy_body=None, shared_paths=()):
         self.store = store
         self.provider = provider
         self.router = router or ModelRouter(store, provider_name=provider.name)
@@ -28,6 +29,9 @@ class Scheduler:
         self.lease_ttl = lease_ttl
         self.repo_facts = repo_facts or {}
         self.dry_run = dry_run
+        self.permission_policy = permission_policy_body or permission_policy.DEFAULT_POLICY
+        # Checkouts a bypassed worker must never be pointed at.
+        self.shared_paths = tuple(shared_paths)
 
     # --- selection --------------------------------------------------------
 
@@ -63,8 +67,12 @@ class Scheduler:
         landing = [j["id"] for j in self.store.list_jobs(project_id=job["project_id"])
                    if j.get("lands_job_id") == job["id"]]
         routing = self.router.route(job["role"])
+        mode = self.permission_mode_for(job)
         return {
             "job_id": job["id"], "role": job["role"], "risk": job["risk"],
+            "permission_mode": mode,
+            "bypass_permissions": permission_policy.is_bypass(mode),
+            "worktree": job["worktree"],
             "review_policy": job["review_policy"],
             "model": routing.model_id, "effort": routing.effort,
             "routing_source": routing.source, "critical_role": routing.critical,
@@ -95,7 +103,17 @@ class Scheduler:
             # runs, then the pair is checked — so no arm can be dispatched
             # against a configuration the other one did not get.
             routing = self.router.route(job["role"])
-            experiments.lock_routing(self.store, job, routing.model_id, routing.effort)
+            mode = self.permission_mode_for(job, record=True)
+            if job["role"] in permission_policy.PRIVILEGED_ROLES and job["lands_job_id"]:
+                # A privileged job is bounded before it starts, not trusted after.
+                landing.preconditions(self.store, job)
+                job = self.store.get_job(job["id"])
+            # Persist what this job will actually run as, then propagate it to
+            # every other arm if this job is part of an experiment.
+            self.store.update_job(job["id"], model=routing.model_id,
+                                  effort=routing.effort, permission_mode=mode)
+            experiments.lock_routing(self.store, job, routing.model_id, routing.effort,
+                                     permission_mode=mode)
             experiments.check_pair(self.store, job)
             job = self.store.get_job(job["id"])
             packet = self.compiler.compile(job, repo_facts=self.repo_facts)
@@ -113,7 +131,8 @@ class Scheduler:
             tool_policy.assert_read_only(job["role"], tools)
             run = metrics.start_run(self.store, self.store.get_job(job["id"]),
                                     provider=self.provider.name, model=routing.model_id,
-                                    session_id=session_id, routing=routing, tools=tools)
+                                    session_id=session_id, routing=routing, tools=tools,
+                                    permission_mode=mode, worktree=job["worktree"])
             self.store.transition(job["id"], machine.RUNNING, actor=_actor(job),
                                   reason=f"run {run['id']}")
 
@@ -124,7 +143,7 @@ class Scheduler:
                 fallback_model=routing.fallback_model,
                 max_budget_usd=routing.max_budget_usd, tools=tools,
                 disallowed_tools=tuple(tool_policy.disallowed_for(job["role"])),
-                permission_mode=job["metadata"].get("permission_mode"),
+                permission_mode=mode,
                 timeout_s=job["metadata"].get("timeout_s", 900), attempt=attempt,
                 metadata={"risk": job["risk"], "goal_id": job["goal_id"],
                           "routing": routing.to_dict()},
@@ -147,6 +166,19 @@ class Scheduler:
             return self.store.get_job(job["id"]), outcome
         finally:
             leases.release(self.store, job["id"], token)
+
+    def permission_mode_for(self, job, record=False):
+        """Resolve the execution policy for one job, recording any downgrade."""
+        mode, reason = permission_policy.resolve(
+            job["role"], worktree=job["worktree"], shared_paths=self.shared_paths,
+            policy=self.permission_policy)
+        if reason and record:
+            self.store.record_event(
+                "permission.downgraded",
+                {"job_id": job["id"], "role": job["role"], "mode": mode,
+                 "reason": reason},
+                project_id=job["project_id"], job_id=job["id"])
+        return mode
 
     def _persist_prompt(self, job, prompt):
         directory = config.job_dir(job["project_id"], job["id"])

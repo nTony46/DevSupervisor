@@ -48,6 +48,18 @@ proves it. A criterion with no test is not met.
 | a worker-requested subtask is created by the supervisor | `test_delegation.py::AuthorizationTests`, `::EndToEndDelegationTests` |
 | a retrospective cannot reach the routing floor | `test_model_routing.py::test_a_retrospective_cannot_reach_the_routing_floor` |
 
+## Execution-policy follow-up
+
+| Requirement | Proven by |
+|---|---|
+| isolated Example worker roles receive the bypass flag | `test_permissions.py::PolicyDefaultTests`, `::test_an_isolated_worker_receives_the_bypass_flag` |
+| bypass is not authority to land, push, or rewrite | `test_permissions.py::BypassIsNotAuthorityTests` |
+| A/B arms cannot differ in permission mode | `test_permissions.py::PairLockPermissionTests` |
+| child jobs cannot bypass supervisor authorization | `test_permissions.py::ChildAuthorizationTests` |
+| run metadata records mode, bypass, and worktree | `test_permissions.py::RunMetadataTests` |
+| bypass is withheld outside an isolated worktree | `test_permissions.py::IsolationTests` |
+| the installed CLI accepts the constructed command | `test_permissions.py::CommandConstructionTests` (parse-level, no paid run) |
+
 
 ## Non-negotiables for the suite itself
 

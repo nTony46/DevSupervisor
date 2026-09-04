@@ -34,9 +34,21 @@ class DelegationRefused(PolicyViolation):
     """A subtask request was not something the supervisor will create."""
 
 
+# Fields a requester may not set. Execution policy is resolved by the supervisor
+# from role policy at dispatch; a worker asking for its child to run bypassed is
+# asking to escalate.
+FORBIDDEN_REQUEST_FIELDS = ("permission_mode", "model", "effort", "tools",
+                            "max_budget_usd", "provider")
+
+
 def _validate(request, allowed_roles):
     if not isinstance(request, dict):
         raise DelegationRefused(f"subtask request must be an object, got {type(request).__name__}")
+    smuggled = [field for field in FORBIDDEN_REQUEST_FIELDS if field in request]
+    if smuggled:
+        raise DelegationRefused(
+            f"a subtask request may not set execution policy {smuggled}; the "
+            f"supervisor resolves that from role policy at dispatch")
     role = request.get("role")
     if role not in allowed_roles:
         raise DelegationRefused(
