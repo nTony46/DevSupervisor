@@ -94,3 +94,19 @@
   dropped, and a fresh store resumes at landing — dispatching exactly the
   landing and evaluator jobs and nothing already done.
 - 140 tests green.
+
+## Phase 6 — observability and self-improvement
+
+- Coarse blocker and failure taxonomies. Fine categories are unstable; the point
+  is to see a pattern across many jobs, not to label one blocker perfectly.
+- Observations: first-pass review rate, blocker and failure categories, job size
+  against rejection, review value per (job_type, risk) group, run statuses, spend.
+- Three candidate rules — decomposition when large jobs are the ones being
+  rejected, lighter review where review has never rejected, and a retry-strategy
+  change when one failure category dominates. All refuse to fire below four
+  samples: a policy derived from two data points is noise with a version number.
+- The guardrail is structural rather than behavioural. The retrospective has no
+  adopt path, and `learnable.propose` refuses any name reaching for an immutable
+  rule, so a well-behaved retrospective and a misbehaving one are equally unable
+  to weaken safety. Tested both ways.
+- 153 tests green.
