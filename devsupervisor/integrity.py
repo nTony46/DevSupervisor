@@ -23,17 +23,33 @@ def snapshot(worktree):
         "is_git": True,
         "head": facts.get("head"),
         "branch": facts.get("branch"),
-        "clean": facts.get("clean"),
-        "dirty_paths": facts.get("dirty_paths"),
+        # Tracked modifications are the invariant. A reviewer that runs the
+        # project's test suite legitimately leaves build output behind, and
+        # failing a good review over a __pycache__ directory would teach the
+        # wrong lesson — that running the checks is risky.
+        "tracked_modified": gitfacts.modified_tracked(worktree),
+        "untracked_count": len(gitfacts.untracked(worktree)),
     }
+
+
+# Changing any of these means the worker altered committed state or tracked
+# files. Untracked additions are reported, never enforced.
+ENFORCED_KEYS = ("head", "branch", "tracked_modified")
 
 
 def diff(before, after):
     if not before or not after:
         return {}
     return {key: (before.get(key), after.get(key))
-            for key in ("head", "branch", "clean", "dirty_paths")
+            for key in ENFORCED_KEYS
             if before.get(key) != after.get(key)}
+
+
+def side_effects(before, after):
+    """Untracked files a run left behind. Informational."""
+    if not before or not after:
+        return 0
+    return (after.get("untracked_count") or 0) - (before.get("untracked_count") or 0)
 
 
 def assert_unchanged(job_id, role, before, after):

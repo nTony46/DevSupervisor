@@ -71,6 +71,17 @@ def rev_parse(repo, ref):
     return value
 
 
+def modified_tracked(repo):
+    """Tracked files differing from HEAD. Untracked output is deliberately excluded."""
+    value, _ = _git(repo, "diff", "--name-only", "HEAD")
+    return sorted(line for line in (value or "").splitlines() if line)
+
+
+def untracked(repo):
+    value, _ = _git(repo, "ls-files", "--others", "--exclude-standard")
+    return sorted(line for line in (value or "").splitlines() if line)
+
+
 def changed_paths(repo, sha, base=None):
     """Files a branch tip changed relative to its merge base with the target."""
     base = base or merge_base(repo, sha, "HEAD")

@@ -116,7 +116,12 @@ class Scheduler:
                                      permission_mode=mode)
             experiments.check_pair(self.store, job)
             job = self.store.get_job(job["id"])
-            packet = self.compiler.compile(job, repo_facts=self.repo_facts)
+            continuation = job["metadata"].get("continuation")
+            session_id = job["session_id"] if job["session_policy"] == "reuse" else None
+            if continuation and session_id:
+                packet = self.compiler.compile_continuation(job, continuation)
+            else:
+                packet = self.compiler.compile(job, repo_facts=self.repo_facts)
             self.compiler.persist(job, packet)
             prompt = packet.render() + self.provider.result_instructions(job)
             self._persist_prompt(job, prompt)
@@ -125,7 +130,6 @@ class Scheduler:
                                   reason=f"provider={self.provider.name}")
             attempt = job["attempt"] + 1
             self.store.update_job(job["id"], attempt=attempt)
-            session_id = job["session_id"] if job["session_policy"] == "reuse" else None
             tools = tuple(job["metadata"].get("tools")
                           or tool_policy.profile_for(job["role"]))
             tool_policy.assert_read_only(job["role"], tools)
@@ -157,8 +161,12 @@ class Scheduler:
                 outcome = RunOutcome(status=RUN_FAILED, error=f"{type(exc).__name__}: {exc}")
             if before is not None:
                 # An allowlist is a hope; this is the guarantee.
-                integrity.assert_unchanged(job["id"], job["role"], before,
-                                           integrity.snapshot(job["worktree"]))
+                after = integrity.snapshot(job["worktree"])
+                integrity.assert_unchanged(job["id"], job["role"], before, after)
+                left_behind = integrity.side_effects(before, after)
+                if left_behind:
+                    metrics.record(self.store, "run.untracked_files_left",
+                                   value=left_behind, job_id=job["id"], run_id=run["id"])
 
             metrics.finish_run(self.store, run["id"], outcome)
             if outcome.session_id:

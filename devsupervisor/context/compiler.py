@@ -99,6 +99,26 @@ class ContextCompiler:
         packet.sections = [(title, redact.redact(body)) for title, body in packet.sections]
         return packet
 
+    def compile_continuation(self, job, instruction, goal=None):
+        """A short follow-up for a session that already holds this job's context.
+
+        Re-sending the full packet to a live session pays for context it already
+        has and invites it to start over. What a continuation needs is the
+        safety rules, which are never optional, what changed, and the specific
+        ask.
+        """
+        packet = JobPacket(job_id=job["id"], role=job["role"])
+        packet.sections.append(("Immutable safety policy", immutable.render()))
+        packet.sections.append((
+            "Continuing your earlier session",
+            f"You are continuing work on {job['id']} ({job['role']}). Your earlier "
+            f"context still applies; do not start over.\n\n"
+            f"OUT OF SCOPE (unchanged): {job.get('non_goals') or '(unspecified)'}\n\n"
+            f"OUTPUT CONTRACT (unchanged): {job.get('output_contract') or ''}"))
+        packet.sections.append(("What to do now", instruction))
+        packet.sections = [(title, redact.redact(body)) for title, body in packet.sections]
+        return packet
+
     def persist(self, job, packet):
         """Freeze the packet next to the job so the handoff outlives the process."""
         directory = config.job_dir(job["project_id"], job["id"])

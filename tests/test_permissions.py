@@ -278,3 +278,78 @@ class RunMetadataTests(HarnessTestCase):
         self.assertIn("build", bypassed)
         self.assertIn("reviewer", bypassed)
         self.assertIn("landing", guarded)
+
+
+class IntegrityScopeTests(HarnessTestCase):
+    """Running the project's checks is not a violation; changing the code is."""
+
+    def setUp(self):
+        super().setUp()
+        from devsupervisor import integrity
+        self.integrity = integrity
+        self.repo = self.home / "wt"
+        self.repo.mkdir()
+        self._git("init", "-q", "-b", "main")
+        (self.repo / "a.py").write_text("x = 1\n")
+        (self.repo / ".gitignore").write_text("__pycache__/\n")
+        self._git("add", "-A")
+        self._git("-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-q", "-m", "one")
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
+
+    def test_build_output_left_by_a_test_run_is_not_a_violation(self):
+        before = self.integrity.snapshot(self.repo)
+        (self.repo / "__pycache__").mkdir()
+        (self.repo / "__pycache__" / "a.pyc").write_text("bytecode")
+        (self.repo / "test-output.log").write_text("176 tests OK")
+        after = self.integrity.snapshot(self.repo)
+        self.assertTrue(self.integrity.assert_unchanged("R-1", "reviewer", before, after))
+        self.assertGreater(self.integrity.side_effects(before, after), 0)
+
+    def test_editing_a_tracked_file_is_a_violation(self):
+        before = self.integrity.snapshot(self.repo)
+        (self.repo / "a.py").write_text("x = 2\n")
+        after = self.integrity.snapshot(self.repo)
+        with self.assertRaises(PolicyViolation) as caught:
+            self.integrity.assert_unchanged("R-1", "reviewer", before, after)
+        self.assertIn("tracked_modified", str(caught.exception))
+
+    def test_moving_head_is_a_violation(self):
+        before = self.integrity.snapshot(self.repo)
+        (self.repo / "b.py").write_text("y = 1\n")
+        self._git("add", "-A")
+        self._git("-c", "user.email=t@e.com", "-c", "user.name=T", "commit", "-q", "-m", "two")
+        after = self.integrity.snapshot(self.repo)
+        with self.assertRaises(PolicyViolation):
+            self.integrity.assert_unchanged("R-1", "reviewer", before, after)
+
+
+class ContinuationTests(HarnessTestCase):
+    def test_resuming_a_session_sends_a_continuation_not_the_whole_packet(self):
+        from devsupervisor.context import ContextCompiler
+        project = self.make_project()
+        goal = self.store.create_goal(project["id"], "Review the thing")
+        job = self.store.create_job(
+            project["id"], "feature", "reviewer", "thing", goal_id=goal["id"],
+            scope="A LONG ORIGINAL SCOPE THAT SHOULD NOT BE RESENT",
+            non_goals="do not fix", output_contract="verdict")
+        continuation = ContextCompiler(self.store).compile_continuation(
+            job, "You now have a working shell. Run the tests and finish your verdict.")
+        rendered = continuation.render()
+        self.assertIn("continuing work on", rendered.lower())
+        self.assertIn("Run the tests and finish your verdict", rendered)
+        self.assertIn("Never force push", rendered)          # safety is never optional
+        self.assertNotIn("A LONG ORIGINAL SCOPE", rendered)  # the session already has it
+
+    def test_a_continuation_is_only_used_when_a_session_is_actually_reused(self):
+        project = self.make_project()
+        job = self.store.create_job(
+            project["id"], "feature", "reviewer", "thing", worktree="/tmp/wt",
+            session_policy="fresh", metadata={"continuation": "keep going"})
+        self.store.transition(job["id"], machine.READY, actor="scheduler")
+        supervisor = Supervisor(self.store, provider=MockProvider(default=completed()))
+        supervisor.advance(self.store.get_job(job["id"]))
+        prompt = supervisor.provider.calls[0].prompt
+        self.assertIn("Job contract", prompt)                # full packet, not a stub
+        self.assertNotIn("Continuing your earlier session", prompt)
