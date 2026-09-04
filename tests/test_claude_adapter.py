@@ -62,3 +62,99 @@ class ClaudeAdapterTests(HarnessTestCase):
         described = self.provider.describe()
         self.assertIn("binary_on_path", described)
         self.assertTrue(described["paid"])
+
+
+# Captured from a real `claude -p --output-format json` run. The runtime bills a
+# small helper model alongside the model that does the reasoning, and reports
+# only uncached input under `usage`.
+REAL_ENVELOPE = {
+    "modelUsage": {
+        "claude-haiku-4-5-20251001": {
+            "inputTokens": 1112, "outputTokens": 12, "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 0, "costUSD": 0.001172,
+            "canonicalModel": "claude-haiku-4-5", "thinkingTokens": 0,
+        },
+        "claude-opus-5": {
+            "inputTokens": 2, "outputTokens": 4, "cacheReadInputTokens": 10123,
+            "cacheCreationInputTokens": 8257, "costUSD": 0.0877415,
+            "canonicalModel": "claude-opus-5", "thinkingTokens": 512,
+        },
+    },
+    "usage": {"input_tokens": 2, "output_tokens": 4},
+    "total_cost_usd": 0.0889135,
+    "session_id": "sess-real",
+}
+
+
+class PrimaryModelAccountingTests(HarnessTestCase):
+    """A run record that names the wrong model is worse than none."""
+
+    def test_the_requested_model_is_reported_not_the_helper(self):
+        self.assertEqual(
+            ClaudeCLIProvider.resolved_model(REAL_ENVELOPE, "claude-opus-5"),
+            "claude-opus-5")
+
+    def test_without_a_request_the_costliest_model_is_the_primary_one(self):
+        # Alphabetical order would pick the haiku helper here.
+        self.assertEqual(ClaudeCLIProvider.resolved_model(REAL_ENVELOPE), "claude-opus-5")
+
+    def test_a_canonical_name_matches_a_dated_model_id(self):
+        self.assertEqual(
+            ClaudeCLIProvider.resolved_model(REAL_ENVELOPE, "claude-haiku-4-5"),
+            "claude-haiku-4-5-20251001")
+
+    def test_token_counts_include_cache_reads(self):
+        tokens_in, tokens_out, thinking = ClaudeCLIProvider.token_counts(
+            REAL_ENVELOPE, "claude-opus-5")
+        # `usage.input_tokens` says 2; the run actually read 18,382.
+        self.assertEqual(tokens_in, 2 + 10123 + 8257)
+        self.assertEqual(tokens_out, 4)
+        self.assertEqual(thinking, 512)
+
+    def test_every_billing_model_is_recorded_not_just_the_primary(self):
+        costs = ClaudeCLIProvider.model_costs(REAL_ENVELOPE)
+        self.assertEqual(sorted(costs), ["claude-haiku-4-5-20251001", "claude-opus-5"])
+        self.assertAlmostEqual(sum(costs.values()), 0.0889135, places=6)
+
+    def test_the_parsed_outcome_carries_all_of_it(self):
+        import json
+        provider = ClaudeCLIProvider(budget_usd=10.0, allow_paid=True)
+        envelope = dict(REAL_ENVELOPE, result=RESULT_BLOCK)
+        outcome = provider._parse(json.dumps(envelope), requested="claude-opus-5")
+        self.assertTrue(outcome.succeeded)
+        self.assertEqual(outcome.model_resolved, "claude-opus-5")
+        self.assertEqual(outcome.tokens_in, 18382)
+        self.assertEqual(outcome.thinking_tokens, 512)
+        self.assertIn("claude-haiku-4-5-20251001", outcome.models_used)
+
+
+class WorkerContractTests(HarnessTestCase):
+    def test_the_provider_tells_the_worker_how_to_answer(self):
+        instructions = ClaudeCLIProvider().result_instructions()
+        self.assertIn(RESULT_FENCE, instructions)
+        self.assertIn("blockers", instructions)
+        self.assertIn("did not run", instructions)
+
+    def test_read_only_roles_get_no_writing_tools(self):
+        from devsupervisor.errors import PolicyViolation
+        from devsupervisor.policy import tools
+        for role in ("reviewer", "evaluator", "security", "investigator"):
+            self.assertTrue(tools.assert_read_only(role, tools.profile_for(role)), role)
+            self.assertNotIn("Edit", tools.profile_for(role), role)
+        with self.assertRaises(PolicyViolation):
+            tools.assert_read_only("reviewer", tools.IMPLEMENT)
+
+    def test_a_builder_may_edit_and_a_lander_may_not_force_push(self):
+        from devsupervisor.policy import tools
+        self.assertIn("Edit", tools.profile_for("build"))
+        joined = " ".join(tools.profile_for("landing"))
+        self.assertNotIn("--force", joined)
+        self.assertNotIn("push -f", joined)
+        self.assertNotIn("reset --hard", joined)
+
+    def test_permission_prompts_are_never_left_to_nobody(self):
+        from devsupervisor.providers import RunRequest
+        argv = ClaudeCLIProvider().build_argv(
+            RunRequest(job_id="R-1", role="reviewer", prompt="p"))
+        self.assertEqual(argv[argv.index("--permission-prompts") + 1], "none")
+        self.assertIn("--permission-mode", argv)

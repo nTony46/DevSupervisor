@@ -18,7 +18,10 @@ class StructuralTests(HarnessTestCase):
         # store, no session, and no job-creation call on it at all.
         surface = {name for name in dir(Provider) if not name.startswith("_")}
         self.assertEqual(surface, {"run", "resume", "cancel", "status", "describe",
-                                   "name", "is_paid"})
+                                   "result_instructions", "name", "is_paid"})
+        # The point is the absence, not the list: nothing here reaches state.
+        self.assertFalse(any("job" in name or "store" in name or "create" in name
+                             for name in surface))
 
     def test_a_result_can_only_request_never_create(self):
         result = WorkerResult(status="COMPLETED", subtask_requests=[REQUEST])

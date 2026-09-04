@@ -54,9 +54,15 @@ def finish_run(store, run_id, outcome):
     if outcome.cost_usd is not None:
         record(store, "run.cost_usd", value=outcome.cost_usd, job_id=run["job_id"], run_id=run_id)
     for name, value in (("run.tokens_in", outcome.tokens_in),
-                        ("run.tokens_out", outcome.tokens_out)):
+                        ("run.tokens_out", outcome.tokens_out),
+                        ("run.thinking_tokens", getattr(outcome, "thinking_tokens", None))):
         if value is not None:
             record(store, name, value=value, job_id=run["job_id"], run_id=run_id)
+    # One run bills several models. Recording only the primary would hide the
+    # helper models entirely from any later cost analysis.
+    for model, model_cost in (getattr(outcome, "models_used", None) or {}).items():
+        record(store, "run.model_cost", value=model_cost, text=model,
+               job_id=run["job_id"], run_id=run_id)
     return get_run(store, run_id)
 
 

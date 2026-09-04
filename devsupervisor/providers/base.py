@@ -34,6 +34,7 @@ class RunRequest:
     fallback_model: str = None
     max_budget_usd: float = None
     tools: tuple = ()
+    permission_mode: str = None
     timeout_s: int = 900
     attempt: int = 1
     metadata: dict = field(default_factory=dict)
@@ -51,6 +52,10 @@ class RunOutcome:
     exit_code: int = None
     error: str = None
     model_resolved: str = None
+    # Every model that billed on this run, id -> cost. A run is rarely one model:
+    # the runtime uses a small helper alongside the model that did the thinking.
+    models_used: dict = field(default_factory=dict)
+    thinking_tokens: int = None
 
     @property
     def succeeded(self):
@@ -75,6 +80,15 @@ class Provider:
 
     def status(self, session_id):
         return "UNKNOWN"
+
+    def result_instructions(self, job=None):
+        """How this runtime wants the structured result returned.
+
+        The packet describes the work; this describes the envelope. Keeping them
+        apart means the context compiler never has to know which runtime it is
+        talking to.
+        """
+        return ""
 
     def describe(self):
         return {"name": self.name, "paid": self.is_paid}

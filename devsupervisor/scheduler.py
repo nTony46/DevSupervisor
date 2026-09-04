@@ -8,6 +8,7 @@ logic without any risk of side effects.
 from . import artifacts, config, experiments, gates, metrics
 from .context import ContextCompiler
 from .errors import LeaseError
+from .policy import tools as tool_policy
 from .policy.routing import ModelRouter
 from .providers import RunRequest
 from .providers.base import RUN_FAILED, RunOutcome
@@ -99,7 +100,7 @@ class Scheduler:
             job = self.store.get_job(job["id"])
             packet = self.compiler.compile(job, repo_facts=self.repo_facts)
             self.compiler.persist(job, packet)
-            prompt = packet.render()
+            prompt = packet.render() + self.provider.result_instructions(job)
             self._persist_prompt(job, prompt)
 
             self.store.transition(job["id"], machine.DISPATCHED, actor="scheduler",
@@ -107,7 +108,9 @@ class Scheduler:
             attempt = job["attempt"] + 1
             self.store.update_job(job["id"], attempt=attempt)
             session_id = job["session_id"] if job["session_policy"] == "reuse" else None
-            tools = job["metadata"].get("tools") or ()
+            tools = tuple(job["metadata"].get("tools")
+                          or tool_policy.profile_for(job["role"]))
+            tool_policy.assert_read_only(job["role"], tools)
             run = metrics.start_run(self.store, self.store.get_job(job["id"]),
                                     provider=self.provider.name, model=routing.model_id,
                                     session_id=session_id, routing=routing, tools=tools)
@@ -119,7 +122,8 @@ class Scheduler:
                 workdir=job["worktree"] or job["repo"], session_id=session_id,
                 model=routing.model_id, effort=routing.effort,
                 fallback_model=routing.fallback_model,
-                max_budget_usd=routing.max_budget_usd, tools=tuple(tools),
+                max_budget_usd=routing.max_budget_usd, tools=tools,
+                permission_mode=job["metadata"].get("permission_mode"),
                 timeout_s=job["metadata"].get("timeout_s", 900), attempt=attempt,
                 metadata={"risk": job["risk"], "goal_id": job["goal_id"],
                           "routing": routing.to_dict()},
