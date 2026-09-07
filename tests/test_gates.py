@@ -59,3 +59,58 @@ class GateTests(HarnessTestCase):
         gates.open_gate(self.store, "budget", "Spend?", project_id=self.project["id"],
                         job_id=self.job["id"])
         self.assertEqual(len(gates.open_gates(self.store, project_id=self.project["id"])), 1)
+
+
+class CriticalDispatchGateTests(HarnessTestCase):
+    """A CRITICAL job must not spend anything without a recorded approval.
+
+    The planner opens gates for CRITICAL plans, but jobs can also be created
+    directly — an entry path that had no gate at all. The guarantee therefore
+    lives at dispatch, which every job passes through however it was created.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from devsupervisor.providers.mock import MockProvider, completed
+        from devsupervisor.supervisor import Supervisor
+        self.project = self.make_project()
+        self.supervisor = Supervisor(self.store,
+                                     provider=MockProvider(default=completed()))
+
+    def _critical_job(self):
+        job = self.store.create_job(self.project["id"], "feature", "build",
+                                    "destructive thing", risk="CRITICAL",
+                                    worktree="/tmp/wt")
+        self.store.transition(job["id"], machine.READY, actor="scheduler")
+        return job
+
+    def test_an_ungated_critical_job_is_parked_not_dispatched(self):
+        job = self._critical_job()
+        self.supervisor.advance(self.store.get_job(job["id"]))
+
+        self.assertEqual(self.supervisor.provider.calls, [])
+        self.assertEqual(self.store.get_job(job["id"])["status"], machine.WAITING_HUMAN)
+        self.assertEqual(self.store.conn.execute(
+            "SELECT COUNT(*) AS n FROM runs").fetchone()["n"], 0)
+
+    def test_the_requirement_is_recorded_as_a_gate_and_an_event(self):
+        job = self._critical_job()
+        self.supervisor.advance(self.store.get_job(job["id"]))
+        open_now = gates.open_gates(self.store, job_id=job["id"])
+        self.assertEqual([g["kind"] for g in open_now], ["destructive"])
+        self.assertTrue(self.store.events(kind="critical.gate_required"))
+
+    def test_an_approved_gate_lets_it_run(self):
+        job = self._critical_job()
+        gate = gates.open_gate(self.store, "destructive", "Approve?",
+                               project_id=self.project["id"], job_id=job["id"])
+        gates.decide(self.store, gate["id"], approved=True, actor="tony")
+        self.supervisor.advance(self.store.get_job(job["id"]))
+        self.assertEqual(len(self.supervisor.provider.calls), 1)
+
+    def test_non_critical_work_is_unaffected(self):
+        job = self.store.create_job(self.project["id"], "feature", "build", "ordinary",
+                                    risk="HIGH", worktree="/tmp/wt")
+        self.store.transition(job["id"], machine.READY, actor="scheduler")
+        self.supervisor.advance(self.store.get_job(job["id"]))
+        self.assertEqual(len(self.supervisor.provider.calls), 1)

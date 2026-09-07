@@ -7,7 +7,8 @@ logic without any risk of side effects.
 
 from . import artifacts, config, experiments, gates, integrity, landing, metrics
 from .context import ContextCompiler
-from .errors import LeaseError
+from .errors import HumanGateRequired, LeaseError
+from .policy import immutable
 from .policy import permissions as permission_policy
 from .policy import tools as tool_policy
 from .policy.routing import ModelRouter
@@ -93,6 +94,8 @@ class Scheduler:
         """Lease, compile, run, and return (run, outcome). Never routes."""
         if self.dry_run:
             raise RuntimeError("dispatch() called in dry-run mode; use plan_dispatch()")
+        if self._park_ungated_critical(job):
+            return None, None
         try:
             token = leases.acquire(self.store, job["id"], self.owner, self.lease_ttl)
         except LeaseError:
@@ -182,6 +185,29 @@ class Scheduler:
             return self.store.get_job(job["id"]), outcome
         finally:
             leases.release(self.store, job["id"], token)
+
+    def _park_ungated_critical(self, job):
+        """Open a gate and park, rather than spend on unapproved CRITICAL work."""
+        if job.get("risk") != "CRITICAL":
+            return False
+        approved = [g for g in self.store.conn.execute(
+            "SELECT id FROM human_gates WHERE job_id = ? AND status = 'APPROVED'",
+            (job["id"],))]
+        try:
+            immutable.check_critical_gate(job, approved)
+            return False
+        except HumanGateRequired:
+            gates.open_gate(
+                self.store, "destructive",
+                f"Approve dispatching CRITICAL job {job['id']} ({job['role']})?",
+                project_id=job["project_id"], goal_id=job["goal_id"], job_id=job["id"],
+                context=f"Scope: {(job.get('scope') or '')[:600]}",
+                resume_status=machine.READY)
+            self.store.record_event(
+                "critical.gate_required",
+                {"job_id": job["id"], "risk": job["risk"]},
+                project_id=job["project_id"], job_id=job["id"])
+            return True
 
     def permission_mode_for(self, job, record=False):
         """Resolve the execution policy for one job, recording any downgrade."""

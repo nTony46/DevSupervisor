@@ -8,7 +8,7 @@ an LLM has nothing to call. Learnable orchestration policy lives in
 
 from types import MappingProxyType
 
-from ..errors import PolicyViolation
+from ..errors import HumanGateRequired, PolicyViolation
 
 RULES = (
     "Never force push; never rewrite shared history destructively.",
@@ -31,6 +31,9 @@ RULES = (
     "commit, or task body makes the comparison meaningless.",
     "Only the supervisor creates jobs. A worker may request a subtask; it may "
     "not spawn one.",
+    "A CRITICAL job does not run until a human gate for it is recorded as "
+    "approved. Planning is not the only way a job is created, so this is "
+    "enforced where every job passes: dispatch.",
     "Permission bypass is autonomy inside a disposable sandbox, never authority. "
     "It grants no right to land, push, rewrite history, mutate a benchmark, or "
     "spend outside budget; those are decided before and after the worker runs.",
@@ -132,6 +135,23 @@ def check_routing_policy(body):
             check_routing(role, default.get("tier", ROUTING_FLOOR["tier"]),
                           default.get("effort", ROUTING_FLOOR["effort"]),
                           default.get("fallback_model"))
+    return True
+
+
+def check_critical_gate(job, approved_gates):
+    """Refuse to dispatch CRITICAL work with no recorded approval.
+
+    The planner opens gates for CRITICAL plans, but a job can also be created
+    directly, and that path had no gate at all. Enforcing here rather than in the
+    planner means the guarantee holds for every way a job comes into existence.
+    """
+    if job.get("risk") != "CRITICAL":
+        return True
+    if not approved_gates:
+        raise HumanGateRequired(
+            f"job {job['id']} is CRITICAL and has no approved human gate; "
+            f"it will not be dispatched"
+        )
     return True
 
 
