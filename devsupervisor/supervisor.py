@@ -174,19 +174,28 @@ class Supervisor:
             return self._apply_landing(job, result)
         if job["role"] == "evaluator" and job["reviews_job_id"]:
             return self._apply_evaluation(job, result)
-        if job["role"] in machine.LANDABLE_ROLES:
-            return self._route_candidate(job)
-        return self._finish(job)
+        return self._route_candidate(job)
 
     def _route_candidate(self, job):
-        """A build job either goes for review, or straight to landing when policy allows."""
-        if job["review_policy"] == "none":
+        """Route work that produced something.
+
+        Review policy decides this, not role. Keying on role alone meant a
+        producing role other than "build" — a benchmark author, say — walked
+        into APPROVED with an independent review policy still set, and the guard
+        correctly refused. Anything that owes a review goes to UNDER_REVIEW;
+        only work that is actually landable proceeds toward landing.
+        """
+        if job["review_policy"] != "none":
+            return self.store.transition(job["id"], machine.UNDER_REVIEW,
+                                         actor="supervisor",
+                                         reason="awaiting independent review")
+        if job["role"] in machine.LANDABLE_ROLES:
             self.store.transition(job["id"], machine.APPROVED, actor="supervisor",
                                   reason="review_policy=none")
-            return self.store.transition(job["id"], machine.LANDING_READY, actor="supervisor",
+            return self.store.transition(job["id"], machine.LANDING_READY,
+                                         actor="supervisor",
                                          reason="no review required")
-        return self.store.transition(job["id"], machine.UNDER_REVIEW, actor="supervisor",
-                                     reason="awaiting independent review")
+        return self._finish(job)
 
     def _finish(self, job):
         """Close a job that has nothing to land."""

@@ -132,8 +132,12 @@ def guard_approval(job, actor, work_actors):
 
 
 def guard_done_from_approved(job):
-    """A job with something to land must go through landing, not around it."""
-    if job["role"] in LANDABLE_ROLES:
+    """A job with something to land must go through landing, not around it.
+
+    A job with a closing step assigned owes it that step whatever its role, so
+    the check is "does anything land or freeze this" rather than a role list.
+    """
+    if job["role"] in LANDABLE_ROLES or job.get("lands_job_id_of"):
         raise TransitionGuardFailed(
             f"job {job['id']}: role {job['role']!r} produces a landable candidate; "
             f"it must pass through LANDING_READY rather than closing at APPROVED"

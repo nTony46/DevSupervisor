@@ -144,3 +144,41 @@ class RevisionCapTests(HarnessTestCase):
         kinds = [g["kind"] for g in summary["open_gates"]]
         self.assertIn("retries_exhausted", kinds)
         self.assertEqual(summary["stopped_because"], "waiting on a human gate")
+
+
+class NonBuildProducerTests(HarnessTestCase):
+    """Review policy routes work, not the producing role's name."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project()
+
+    def _produce(self, role, review_policy):
+        from devsupervisor.providers.mock import MockProvider, completed
+        job = self.store.create_job(self.project["id"], "benchmark", role, "a package",
+                                    review_policy=review_policy, worktree="/tmp/wt")
+        self.store.transition(job["id"], machine.READY, actor="scheduler")
+        supervisor = Supervisor(self.store, provider=MockProvider(
+            default=completed("built the package")))
+        supervisor.advance(self.store.get_job(job["id"]))
+        return self.store.get_job(job["id"])
+
+    def test_a_non_build_role_owing_a_review_goes_under_review(self):
+        # This is the case that broke a live benchmark lane: role "benchmark"
+        # was not in LANDABLE_ROLES, so it walked into APPROVED with an
+        # independent review policy still set and the guard refused it.
+        for role in ("benchmark", "researcher", "architect"):
+            job = self._produce(role, "independent")
+            self.assertEqual(job["status"], machine.UNDER_REVIEW, role)
+
+    def test_a_non_build_role_owing_no_review_finishes(self):
+        job = self._produce("investigator", "none")
+        self.assertEqual(job["status"], machine.DONE)
+
+    def test_a_build_role_owing_no_review_goes_toward_landing(self):
+        job = self._produce("build", "none")
+        self.assertEqual(job["status"], machine.LANDING_READY)
+
+    def test_a_build_role_owing_a_review_still_goes_under_review(self):
+        job = self._produce("build", "independent")
+        self.assertEqual(job["status"], machine.UNDER_REVIEW)
