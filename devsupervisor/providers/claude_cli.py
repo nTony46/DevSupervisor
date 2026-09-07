@@ -48,14 +48,19 @@ class ClaudeCLIProvider(Provider):
     is_paid = True
 
     def __init__(self, model=None, budget_usd=0.0, allow_paid=False, binary=BINARY,
-                 extra_args=(), permission_mode="dontAsk"):
+                 extra_args=(), permission_mode="dontAsk", spent_usd=0.0):
         self.model = model
         self.budget_usd = budget_usd
         self.allow_paid = allow_paid
         self.binary = binary
         self.extra_args = tuple(extra_args)
         self.permission_mode = permission_mode
-        self.spent_usd = 0.0
+        # Seeded, not assumed zero. A campaign cap spans many supervisor
+        # processes; a provider that starts every process at zero enforces
+        # nothing across them and would let an aggregate authorization be spent
+        # several times over. The caller passes what the durable ledger already
+        # records against this authorization.
+        self.spent_usd = float(spent_usd)
 
     # --- availability -----------------------------------------------------
 
@@ -63,7 +68,7 @@ class ClaudeCLIProvider(Provider):
     def available(cls, binary=BINARY):
         return shutil.which(binary) is not None
 
-    def preflight(self):
+    def preflight(self, request=None):
         """Everything that must be true before a paid call. Raises otherwise."""
         if not self.allow_paid:
             raise BudgetExceeded(
@@ -74,6 +79,16 @@ class ClaudeCLIProvider(Provider):
         if self.spent_usd >= self.budget_usd:
             raise BudgetExceeded(
                 f"budget exhausted: spent ${self.spent_usd:.2f} of ${self.budget_usd:.2f}"
+            )
+        # A run is authorised for its own configured ceiling, so that ceiling
+        # is what has to fit. Checking only what has already been spent would
+        # admit a call that can legally end above the cap.
+        ask = float(getattr(request, "max_budget_usd", None) or 0.0)
+        if ask and self.spent_usd + ask > self.budget_usd:
+            raise BudgetExceeded(
+                f"a run capped at ${ask:.2f} does not fit the remaining "
+                f"${self.budget_usd - self.spent_usd:.2f} "
+                f"(spent ${self.spent_usd:.2f} of ${self.budget_usd:.2f})"
             )
         if not self.available(self.binary):
             raise ProviderError(f"{self.binary!r} is not on PATH")
@@ -195,7 +210,7 @@ class ClaudeCLIProvider(Provider):
         return usage.get("input_tokens"), usage.get("output_tokens"), None
 
     def run(self, request):
-        self.preflight()
+        self.preflight(request)
         self._requested_model = request.model or self.model
         argv = self.build_argv(request)
         try:
