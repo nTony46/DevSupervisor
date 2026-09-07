@@ -7,6 +7,7 @@ here is made from the database, never from conversation history.
 
 from . import delegation, gates, landing, metrics
 from .context import ContextCompiler
+from .delegation import DelegationRefused
 from .errors import TransitionGuardFailed
 from .memory import candidates as memory_candidates
 from .planner import Planner
@@ -106,8 +107,20 @@ class Supervisor:
         self.scheduler.record_artifacts(job, result)
         self._record_memory_candidates(job, result)
         self._record_metrics(job, result)
-        # A worker may ask for help. Only the supervisor may create the job.
-        delegation.authorize(self.store, job, result.subtask_requests, pack=self.pack)
+        # A worker may ask for help. Only the supervisor may create the job — and a
+        # malformed request is the worker's mistake, not a reason to throw away the
+        # work it already did and was paid for. Refuse the request, record it, and
+        # carry on with the result.
+        try:
+            delegation.authorize(self.store, job, result.subtask_requests, pack=self.pack)
+        except DelegationRefused as exc:
+            metrics.record(self.store, "subtask.refused", text=str(exc)[:200],
+                           job_id=job["id"])
+            self.store.record_event(
+                "subtask.refused",
+                {"job_id": job["id"], "reason": str(exc)[:400],
+                 "requests": result.subtask_requests},
+                project_id=job["project_id"], job_id=job["id"])
 
         if result.status in ("BLOCKED", "NEEDS_HUMAN"):
             return self._park(job, result)

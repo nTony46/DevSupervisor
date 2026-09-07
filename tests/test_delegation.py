@@ -5,6 +5,7 @@ from devsupervisor.delegation import DelegationRefused
 from devsupervisor.providers.base import Provider
 from devsupervisor.providers.mock import MockProvider, approve, completed
 from devsupervisor.results import WorkerResult
+from devsupervisor.state import machine
 from devsupervisor.supervisor import Supervisor
 from tests.support import HarnessTestCase
 
@@ -135,3 +136,33 @@ class EndToEndDelegationTests(HarnessTestCase):
         # authorized the request.
         event = self.store.events(kind="subtask.authorized")[0]
         self.assertEqual(event["payload"]["authorized_by"], "supervisor")
+
+
+class MalformedRequestTests(HarnessTestCase):
+    """A bad subtask request must not destroy the work that came with it."""
+
+    def test_an_invalid_request_is_refused_without_losing_the_result(self):
+        from devsupervisor.providers.mock import MockProvider, approve, completed
+        project = self.make_project()
+        goal = self.store.create_goal(project["id"], "Add workspace support")
+        # A reviewer that approves, and also asks for a role it may not request.
+        provider = MockProvider(script={
+            "build": completed("built", result_sha="sha"),
+            "reviewer": approve("correct", subtask_requests=[
+                {"role": "harness", "scope": "something only the supervisor may create"}]),
+            "evaluator": approve("met")}, default=completed())
+        supervisor = Supervisor(self.store, provider=provider)
+        supervisor.plan_goal(goal)
+        supervisor.run(project["id"])
+
+        # The verdict still landed: the build was approved and carried on.
+        build = self.store.get_job("BUILD-add-workspace-support-001")
+        self.assertEqual(build["status"], machine.DONE)
+        reviewer = self.store.get_job("REVIEWER-add-workspace-support-001")
+        self.assertEqual(reviewer["status"], machine.DONE)
+        # And the refusal is recorded rather than silent.
+        events = self.store.events(kind="subtask.refused")
+        self.assertTrue(events)
+        self.assertIn("harness", events[0]["payload"]["reason"])
+        # No job was created for the refused request.
+        self.assertEqual(self.store.list_jobs(project["id"], role="harness"), [])
