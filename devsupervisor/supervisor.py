@@ -25,6 +25,17 @@ CLOSING_ROLES = frozenset({"landing", "freeze"})
 VERDICT_ROLES = REVIEW_ROLES | {"evaluator"}
 
 
+def _merge_blockers(existing, incoming):
+    """Union of two reviewers' blockers, order preserved, duplicates dropped."""
+    merged = list(existing or [])
+    seen = set(merged)
+    for blocker in incoming or []:
+        if blocker not in seen:
+            merged.append(blocker)
+            seen.add(blocker)
+    return merged
+
+
 class Supervisor:
     def __init__(self, store, provider=None, pack=None, owner="supervisor-1",
                  dry_run=False, repo_facts=None, concurrency=1, router=None,
@@ -219,6 +230,8 @@ class Supervisor:
 
     def _apply_review(self, reviewer_job, result):
         target = self.store.require_job(reviewer_job["reviews_job_id"])
+        if target["status"] != machine.UNDER_REVIEW:
+            return self._apply_late_review(reviewer_job, result, target)
         if result.verdict == "APPROVE":
             self.store.transition(target["id"], machine.APPROVED,
                                   actor=_actor(reviewer_job),
@@ -232,6 +245,67 @@ class Supervisor:
                               fields={"blockers": result.blockers})
         self._finish(reviewer_job)
         return self.revise(target, result.blockers)
+
+    def _apply_late_review(self, reviewer_job, result, target):
+        """A verdict that arrives after the target already left review.
+
+        Independent reviewers run in parallel, so the second one to finish finds
+        the candidate already rejected, already superseded, or already approved.
+        Recording that verdict as an illegal transition threw it away: a build
+        was revised against one reviewer's blockers while the other's — the
+        security review's, in the case that produced this code — sat in the runs
+        table and reached nobody. A review that was paid for and produced
+        reproducible blockers has to land somewhere.
+
+        A blocking verdict outranks an approval regardless of arrival order. An
+        approval that arrives after a rejection does not resurrect anything.
+        """
+        if result.verdict != "REJECT":
+            self.store.record_event("review.non_decisive", {
+                "reviewer": reviewer_job["id"], "target": target["id"],
+                "target_status": target["status"], "verdict": result.verdict,
+                "reason": "the candidate had already left review; an approval "
+                          "does not overturn a rejection"}, job_id=reviewer_job["id"])
+            return self._finish(reviewer_job)
+
+        revision = self._open_revision_for(target)
+        if revision is not None:
+            merged = _merge_blockers(revision["blockers"], result.blockers)
+            self.store.update_job(revision["id"], blockers=merged)
+            metrics.record(self.store, "review.blockers_merged",
+                           value=len(result.blockers or []), job_id=reviewer_job["id"])
+            self.store.record_event("review.merged_into_revision", {
+                "reviewer": reviewer_job["id"], "target": target["id"],
+                "revision": revision["id"], "added": len(merged) - len(revision["blockers"])},
+                job_id=reviewer_job["id"])
+            return self._finish(reviewer_job)
+
+        # No revision exists, so the target was approved or is on its way to
+        # landing. A rejection has to pull it back before it lands.
+        self.store.transition(target["id"], machine.SUPERSEDED, actor=_actor(reviewer_job),
+                              reason=f"rejected by {reviewer_job['id']} after approval; "
+                                     "a blocking review outranks an approval")
+        self.store.record_event("review.approval_overturned", {
+            "reviewer": reviewer_job["id"], "target": target["id"],
+            "previous_status": target["status"]}, job_id=reviewer_job["id"])
+        self._finish(reviewer_job)
+        revision = self._clone_candidate(target, result.blockers)
+        self._rewire(target, revision)
+        self.store.relate(target["id"], revision["id"], "SUPERSEDED_BY",
+                          note="rejected after approval")
+        self.store.relate(revision["id"], target["id"], "SUPERSEDES")
+        return revision
+
+    def _open_revision_for(self, target):
+        """The live revision already opened for this candidate, if there is one."""
+        rows = self.store.conn.execute(
+            "SELECT id FROM jobs WHERE revision_of = ? ORDER BY created_at DESC",
+            (target["id"],)).fetchall()
+        for row in rows:
+            job = self.store.get_job(row["id"])
+            if job and job["status"] not in machine.TERMINAL:
+                return job
+        return None
 
     def _apply_landing(self, landing_job, result):
         """Close out an approved candidate — by landing it, or by freezing it.
