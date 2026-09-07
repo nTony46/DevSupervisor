@@ -31,9 +31,9 @@ RULES = (
     "commit, or task body makes the comparison meaningless.",
     "Only the supervisor creates jobs. A worker may request a subtask; it may "
     "not spawn one.",
-    "A CRITICAL job does not run until a human gate for it is recorded as "
-    "approved. Planning is not the only way a job is created, so this is "
-    "enforced where every job passes: dispatch.",
+    "A CRITICAL job that can change shared state does not run until a human "
+    "gate for it is recorded as approved. Planning is not the only way a job is "
+    "created, so this is enforced where every job passes: dispatch.",
     "Permission bypass is autonomy inside a disposable sandbox, never authority. "
     "It grants no right to land, push, rewrite history, mutate a benchmark, or "
     "spend outside budget; those are decided before and after the worker runs.",
@@ -138,14 +138,21 @@ def check_routing_policy(body):
     return True
 
 
-def check_critical_gate(job, approved_gates):
+def check_critical_gate(job, approved_gates, read_only=False):
     """Refuse to dispatch CRITICAL work with no recorded approval.
 
     The planner opens gates for CRITICAL plans, but a job can also be created
     directly, and that path had no gate at all. Enforcing here rather than in the
     planner means the guarantee holds for every way a job comes into existence.
+
+    Read-only roles are exempt, and deliberately so. A gate authorises a
+    consequence a human should own; inspection has none — a reviewer cannot
+    land, push, mutate, or destroy, and the worktree-integrity check proves it
+    afterwards rather than trusting it. Gating review would put friction on the
+    mechanism that makes CRITICAL work safe to do at all, which is backwards.
+    Spend is bounded separately, by budget caps.
     """
-    if job.get("risk") != "CRITICAL":
+    if job.get("risk") != "CRITICAL" or read_only:
         return True
     if not approved_gates:
         raise HumanGateRequired(

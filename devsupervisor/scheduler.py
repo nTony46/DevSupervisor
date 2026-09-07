@@ -190,11 +190,12 @@ class Scheduler:
         """Open a gate and park, rather than spend on unapproved CRITICAL work."""
         if job.get("risk") != "CRITICAL":
             return False
+        read_only = tool_policy.is_read_only(job["role"])
         approved = [g for g in self.store.conn.execute(
             "SELECT id FROM human_gates WHERE job_id = ? AND status = 'APPROVED'",
             (job["id"],))]
         try:
-            immutable.check_critical_gate(job, approved)
+            immutable.check_critical_gate(job, approved, read_only=read_only)
             return False
         except HumanGateRequired:
             gates.open_gate(

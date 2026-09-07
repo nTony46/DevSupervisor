@@ -114,3 +114,50 @@ class CriticalDispatchGateTests(HarnessTestCase):
         self.store.transition(job["id"], machine.READY, actor="scheduler")
         self.supervisor.advance(self.store.get_job(job["id"]))
         self.assertEqual(len(self.supervisor.provider.calls), 1)
+
+
+class CriticalGateScopeTests(HarnessTestCase):
+    """The gate guards consequences, not inspection."""
+
+    def setUp(self):
+        super().setUp()
+        from devsupervisor.providers.mock import MockProvider, approve, completed
+        from devsupervisor.supervisor import Supervisor
+        self.project = self.make_project()
+        self.supervisor = Supervisor(self.store, provider=MockProvider(
+            script={"reviewer": approve(), "evaluator": approve()},
+            default=completed()))
+
+    def _dispatch(self, role):
+        job = self.store.create_job(self.project["id"], "feature", role, f"{role} work",
+                                    risk="CRITICAL", worktree="/tmp/wt",
+                                    review_policy="none")
+        self.store.transition(job["id"], machine.READY, actor="scheduler")
+        self.supervisor.advance(self.store.get_job(job["id"]))
+        return self.store.get_job(job["id"])
+
+    def test_critical_review_runs_without_a_gate(self):
+        # Gating review would put friction on the mechanism that makes CRITICAL
+        # work safe to do at all.
+        for role in ("reviewer", "evaluator", "security", "qa"):
+            calls_before = len(self.supervisor.provider.calls)
+            self._dispatch(role)
+            self.assertGreater(len(self.supervisor.provider.calls), calls_before,
+                               f"{role} should not need a gate")
+
+    def test_critical_work_that_can_write_still_needs_one(self):
+        job = self._dispatch("build")
+        self.assertEqual(job["status"], machine.WAITING_HUMAN)
+        self.assertEqual(self.supervisor.provider.calls, [])
+
+    def test_the_exemption_follows_the_read_only_tool_policy(self):
+        from devsupervisor.policy import tools
+        from devsupervisor.policy.immutable import check_critical_gate
+        from devsupervisor.errors import HumanGateRequired
+        critical = {"id": "X-1", "risk": "CRITICAL"}
+        for role in ("reviewer", "evaluator"):
+            self.assertTrue(check_critical_gate(critical, [],
+                                                read_only=tools.is_read_only(role)))
+        for role in ("build", "landing"):
+            with self.assertRaises(HumanGateRequired, msg=role):
+                check_critical_gate(critical, [], read_only=tools.is_read_only(role))
