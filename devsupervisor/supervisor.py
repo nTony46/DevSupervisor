@@ -280,6 +280,24 @@ class Supervisor:
                 job_id=reviewer_job["id"])
             return self._finish(reviewer_job)
 
+        # No revision exists and none can be created: the candidate exhausted its
+        # revision cap and is parked at a gate for a human. Its blockers are the
+        # row that human reads, so a late rejection belongs there. Superseding it
+        # would be both illegal and wrong — the decision is not the supervisor's.
+        if not machine.is_legal(target["status"], machine.SUPERSEDED):
+            merged = _merge_blockers(target["blockers"], result.blockers)
+            self.store.update_job(target["id"], blockers=merged)
+            metrics.record(self.store, "review.blockers_merged",
+                           value=len(result.blockers or []), job_id=reviewer_job["id"])
+            self.store.record_event("review.merged_into_parked_candidate", {
+                "reviewer": reviewer_job["id"], "target": target["id"],
+                "target_status": target["status"],
+                "added": len(merged) - len(target["blockers"]),
+                "reason": "the candidate is parked for a human decision and cannot be "
+                          "superseded; a paid blocking verdict still has to reach the "
+                          "row that human reads"}, job_id=reviewer_job["id"])
+            return self._finish(reviewer_job)
+
         # No revision exists, so the target was approved or is on its way to
         # landing. A rejection has to pull it back before it lands.
         self.store.transition(target["id"], machine.SUPERSEDED, actor=_actor(reviewer_job),

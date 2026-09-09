@@ -109,3 +109,55 @@ class ParallelReviewVerdictTests(HarnessTestCase):
         self._verdict(second, reject("second"))
         for reviewer in (first, second):
             self.assertEqual(self.store.get_job(reviewer["id"])["status"], machine.DONE)
+
+
+class LateVerdictOnAParkedCandidateTests(ParallelReviewVerdictTests):
+    """The second reviewer finishes after the target has parked at a human gate.
+
+    When a candidate exhausts its revision cap the supervisor blocks it and opens
+    a retries_exhausted gate. A rejection still in flight then has nowhere to go:
+    there is no open revision to merge into, and WAITING_HUMAN -> SUPERSEDED is
+    not a legal transition. A real campaign hit exactly this and dropped a paid,
+    reproducible security rejection on the floor — the human deciding the gate
+    would have seen two of the five blockers raised against the candidate.
+    """
+
+    def _exhaust_the_revision_cap(self):
+        """Leave the candidate one rejection away from its cap.
+
+        Parking is then reached the way production reaches it: revise() raises
+        TransitionGuardFailed, the supervisor blocks the job and opens a
+        retries_exhausted gate, and no revision is ever created.
+        """
+        build = self.store.get_job(self.build_id)
+        self.store.update_job(build["id"], revision_count=build["max_revisions"])
+
+    def test_a_rejection_that_arrives_after_the_candidate_parks_is_not_lost(self):
+        first, second = self._reviewers()
+        self._exhaust_the_revision_cap()
+        self._verdict(first, reject("the wiring is ungraded"))
+        self.assertEqual(self.store.get_job(self.build_id)["status"], machine.WAITING_HUMAN,
+                         "precondition: the exhausted cap parks the candidate at a gate")
+
+        self._verdict(second, reject("a short quote still identifies the arm"))
+
+        target = self.store.get_job(self.build_id)
+        self.assertEqual(target["status"], machine.WAITING_HUMAN,
+                         "a parked candidate must stay parked; the human still decides")
+        self.assertIn("a short quote still identifies the arm", target["blockers"],
+                      "the late rejection's blockers must reach the row the human reads")
+        self.assertIn("the wiring is ungraded", target["blockers"],
+                      "merging must not drop the blockers already there")
+        self.assertEqual(self.store.get_job(second["id"])["status"], machine.DONE)
+
+    def test_an_approval_that_arrives_after_the_candidate_parks_changes_nothing(self):
+        first, second = self._reviewers()
+        self._exhaust_the_revision_cap()
+        self._verdict(first, reject("the wiring is ungraded"))
+
+        self._verdict(second, approve("looks fine to me"))
+
+        target = self.store.get_job(self.build_id)
+        self.assertEqual(target["status"], machine.WAITING_HUMAN,
+                         "an approval does not unpark a candidate a human must decide")
+        self.assertEqual(target["blockers"], ["the wiring is ungraded"])
