@@ -375,7 +375,7 @@ class Reader:
         project = self.resolve_project(project_key)
         if project is None:
             return {"entries": [], "has_more": False}
-        limit = max(1, min(int(limit or DEFAULT_ACTIVITY_LIMIT), MAX_ACTIVITY_LIMIT))
+        limit = _clamp_limit(limit)
         window = limit * 4
         entries = (self._transition_entries(project["id"], before, window)
                    + self._gate_entries(project["id"], before, window)
@@ -459,6 +459,15 @@ class Reader:
                 "job_id": row["job_id"], "role": None,
             })
         return entries
+
+
+def _clamp_limit(value):
+    """A query string is user input; a bad one gets the default, not a traceback."""
+    try:
+        requested = int(value)
+    except (TypeError, ValueError):
+        requested = DEFAULT_ACTIVITY_LIMIT
+    return max(1, min(requested, MAX_ACTIVITY_LIMIT))
 
 
 def _matches(entry, kind):

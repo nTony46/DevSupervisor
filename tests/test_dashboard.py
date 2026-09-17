@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -395,6 +396,13 @@ class HttpTests(DashboardTestCase):
                 urllib.request.urlopen(request, timeout=5)
             self.assertEqual(caught.exception.code, 405)
             caught.exception.close()
+
+    def test_a_malformed_query_string_does_not_error(self):
+        for query in ("limit=abc", "limit=-5", "limit=99999", "before=';DROP TABLE jobs;--",
+                      "kind=../../etc/passwd", "project="):
+            payload = self.get("/api/activity?" + urllib.parse.quote(query, safe="=&"))
+            self.assertIn("entries", payload)
+        self.assertTrue(self.store.list_jobs(), "the jobs table is still there")
 
     def test_no_request_path_can_read_the_filesystem(self):
         for path in ("/../../etc/passwd", "/static/../reader.py", "/reader.py",
