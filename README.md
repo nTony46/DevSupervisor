@@ -37,6 +37,92 @@ Other commands you'll reach for: `devsup jobs`, `devsup job show <id>`,
 `devsup gates`, `devsup approve|reject <gate-id>`, `devsup pause|resume`,
 `devsup memory list|curate|adopt`, `devsup retrospect`.
 
+## Working with Claude
+
+There are two ways to put a real model behind the supervisor. Both use the
+same durable state, so you can mix them and the dashboard shows either.
+
+### 1. Headless: the supervisor drives Claude Code
+
+```bash
+devsup run <goal-id> --provider claude-cli --allow-paid --budget 20
+```
+
+The supervisor compiles a job packet for each ready job, runs `claude -p` on
+it in a disposable worktree, parses the structured result block the worker is
+told to end with, and moves the job through the state machine. The budget is a
+hard cap that survives restarts; a missing result block is a failed run, not a
+guess. This is the fully autonomous mode and it is the one the test suite
+exercises (with the mock provider standing in for `claude`).
+
+### 2. Interactive: a Claude Code session acts as the supervisor
+
+This is how the project's own author uses it day to day. Open Claude Code in
+the project and paste a structured brief. Claude keeps the durable state in
+DevSupervisor, spawns disposable subagents for the roles below, and reports
+back when the work has landed or a decision is needed.
+
+A brief that works well says four things: the goal, the constraints, what
+"done" means, and when to stop and ask. For example:
+
+```
+# Example — identifier-miss fallback
+
+Goal: when a task description names an identifier that does not exist in the
+index, the retrieval packet must fall back to prose search instead of coming
+back empty.
+
+Constraints: do not change the ranking of hits that already work. No force
+push, no history rewrite. Land on main only after an independent review.
+
+Done means: a regression test that fails on main today and passes after; the
+existing suite green; the change measured on the 75-case set with the numbers
+in the commit message.
+
+Stop and open a gate if: the fix needs a threshold, and you would have to
+guess the value. When done, STOP and report the final SHA.
+```
+
+The session then runs the outer loop by hand: register the goal (`devsup goal
+add`), plan it, hand the build to a worker agent in its own clone, hand the
+result to a *different* reviewer agent that never saw the builder's reasoning,
+loop on REJECT with numbered blockers, land the exact approved SHA, and run
+`devsup approve|reject` decisions past you as gates rather than deciding them
+itself. Prompts are pasted; conversation history is not the record — `devsup
+status`, `devsup jobs`, and the dashboard are.
+
+### The agents
+
+Every job carries a role. A role sets what the worker may touch and how much
+the harness trusts its word.
+
+| Role | What it does | Trust |
+|---|---|---|
+| `investigator` | reads the current system, reproduces a bug, captures a baseline; changes nothing | disposable |
+| `planner` | turns a goal into a contract: scope, non-goals, what done means | privileged |
+| `architect` | writes the design, including the alternatives it rejected | disposable |
+| `build` | implements against the contract in its own worktree; returns a SHA and evidence | disposable |
+| `reviewer` | independent APPROVE/REJECT with numbered blockers; may not fix what it reviews | disposable, critical |
+| `specialist` / `security` | risk-specific review for what the change touches | disposable, critical |
+| `qa` | proves behaviour is unchanged against a captured baseline | disposable |
+| `landing` | checks the approved SHA still exists, lands it with safe git, runs verification | privileged |
+| `evaluator` | asks whether the landed change satisfies the *goal*, not whether the code is nice | disposable, critical |
+| `researcher` | gathers evidence and analyses results, including negative ones | disposable |
+| `operator` | runs an experiment and captures the raw output | privileged |
+| `supervisor` | the outer loop itself | privileged, critical |
+
+*Disposable* roles run unattended with edit permission in a throwaway
+worktree; nothing they do reaches shared state except through a later,
+separately authorised step. *Privileged* roles act on shared state and are
+bounded by deterministic checks, never by a model's judgment. *Critical* roles
+have a model-routing floor that a learnable policy may raise but not lower.
+
+Three rules are enforced by the state machine, not by convention: the agent
+that did the work cannot approve it; a job whose review policy is not `none`
+cannot be approved without going through review; and a job that produced a
+landable candidate cannot close at `APPROVED` — it goes through landing and
+verification or it does not finish.
+
 ## Dashboard
 
 A read-only view of what the supervisor is doing right now:
