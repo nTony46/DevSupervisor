@@ -29,8 +29,13 @@ MAX_ACTIVITY_LIMIT = 200
 
 # Transitions worth a line in the activity log. The rest (PLANNED, READY,
 # DISPATCHED) are bookkeeping the operator did not ask about.
+#
+# WORK_COMPLETE earns its line even though review usually follows immediately:
+# a job whose worker has finished but whose reviewer has not started is not an
+# active agent, so without this row it would be invisible on the whole page.
 ACTIVITY_TRANSITIONS = {
     machine.RUNNING: ("started", "run"),
+    machine.WORK_COMPLETE: ("work complete", "ok"),
     machine.UNDER_REVIEW: ("under review", "run"),
     machine.APPROVED: ("approved", "ok"),
     machine.REJECTED: ("rejected", "bad"),

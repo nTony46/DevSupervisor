@@ -219,6 +219,26 @@ class PersistenceTests(DashboardTestCase):
         self.assertEqual(first, second)
         self.assertTrue(first, "durable transitions must reconstruct the log")
 
+    def test_a_job_waiting_for_a_reviewer_is_still_visible(self):
+        """WORK_COMPLETE is not an active agent, so the log must carry it."""
+        project = self.make_project()
+        job = self.running_job(project)
+        self.store.transition(job["id"], machine.WORK_COMPLETE, actor="worker-1")
+
+        reader = self.reader()
+        working = [a for a in reader.state(project["id"])["agents"]
+                   if a["status"] != summary.AGENT_IDLE]
+        self.assertEqual(working, [], "a finished worker is not an active agent")
+        titles = [e["title"] for e in reader.activity(project["id"])["entries"]]
+        self.assertIn(f"{job['id']} work complete", titles)
+
+    def test_no_two_activity_rows_describe_the_same_moment_twice(self):
+        project = self.make_project()
+        self.finished_job(project, role="evaluator", subject="an analysis")
+        entries = self.reader().activity(project["id"])["entries"]
+        seen = [(e["at"], e["title"]) for e in entries]
+        self.assertEqual(len(seen), len(set(seen)))
+
     def test_a_terminal_job_stays_in_recent_activity(self):
         project = self.make_project()
         job = self.finished_job(project, subject="finished work")
