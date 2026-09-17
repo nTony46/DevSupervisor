@@ -187,6 +187,20 @@ function drawWires(state) {
 /* --- activity --- */
 const MARKS = { ok: '✓', bad: '✗', gate: '◇', run: '→', muted: '·', warn: '↻' };
 
+function localMoment(iso) {
+  const when = new Date(iso);
+  if (isNaN(when)) return String(iso);
+  return when.toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
+function detailValue(key, value) {
+  if (key.endsWith('_at')) return localMoment(value);
+  if (key === 'cost_usd') return `$${Number(value).toFixed(2)}`;
+  return value;
+}
+
 function localTime(iso) {
   const when = new Date(iso);
   if (isNaN(when)) return (iso || '').slice(11, 16);
@@ -242,7 +256,7 @@ async function showDetail(jobId) {
     Object.entries(detail).forEach(([key, value]) => {
       if (key === 'id' || key === 'artifacts') return;
       ui.detailBody.appendChild(node('dt', null, key.replace(/_/g, ' ')));
-      ui.detailBody.appendChild(node('dd', null, value));
+      ui.detailBody.appendChild(node('dd', null, detailValue(key, value)));
     });
     (detail.artifacts || []).forEach((artifact) => {
       ui.detailBody.appendChild(node('dt', null, artifact.kind));
