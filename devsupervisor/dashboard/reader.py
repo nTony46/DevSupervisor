@@ -9,6 +9,7 @@ next request, which is what makes history survive a restart for free.
 """
 
 import json
+import math
 import sqlite3
 import threading
 from pathlib import Path
@@ -31,12 +32,19 @@ STALE_AGENT_SECONDS = 86400
 # genuine long run outlives its own lease. Believing the shorter of the two
 # would report live work as stalled.
 ACTIVE_WITHOUT_LEASE_SECONDS = 3600
+# A ceiling on that extension. `metadata.timeout_s` reaches a job from a worker's
+# own subtask request, which `delegation._create` copies wholesale, so it is
+# model-authored input. Without a bound, a job could declare itself alive
+# forever and the graph would show a dead agent with a running clock -- the
+# defect this grace period exists to avoid, reintroduced from the other side.
+MAX_DECLARED_GRACE_SECONDS = 86400
 MAX_AGENT_NODES = 12
 # The graph is a glance, not a reading surface; the full question is in `devsup gates`.
 SUPERVISOR_LINE_CHARS = 120
 GIT_CACHE_SECONDS = 5
 DEFAULT_ACTIVITY_LIMIT = 50
 MAX_ACTIVITY_LIMIT = 200
+TIE_WINDOW_SLACK = 16
 
 # Transitions worth a line in the activity log. The rest (PLANNED, READY,
 # DISPATCHED) are bookkeeping the operator did not ask about.
@@ -98,6 +106,7 @@ class Reader:
         except sqlite3.Error as exc:
             raise StateUnavailable(f"cannot read {self.db_path}: {exc}") from exc
         self._git_cache = {}
+        self._git_inflight = set()
         # Guards the connection only. Git runs outside it: six subprocesses with
         # a 30s timeout each must never block an unrelated endpoint.
         self._lock = threading.RLock()
@@ -304,12 +313,21 @@ class Reader:
 
     @staticmethod
     def _grace_for(job):
+        """How long this job may run unleased before the graph disbelieves it.
+
+        The declared value is untrusted: bounded, finite, and never negative.
+        """
         declared = (job.get("metadata") or {}).get("timeout_s")
+        if isinstance(declared, bool):
+            declared = 0
         try:
             declared = float(declared)
         except (TypeError, ValueError):
             declared = 0
-        return max(ACTIVE_WITHOUT_LEASE_SECONDS, declared)
+        if not math.isfinite(declared) or declared < 0:
+            declared = 0
+        return max(ACTIVE_WITHOUT_LEASE_SECONDS,
+                   min(declared, MAX_DECLARED_GRACE_SECONDS))
 
     def _agent_node(self, job, status, now):
         run = self._latest_run(job["id"])
@@ -343,9 +361,14 @@ class Reader:
         return age <= RECENT_COMPLETE_SECONDS
 
     def _roles_used(self, project_id):
+        """Every role this project has dispatched, busiest first.
+
+        Unlimited on purpose: the display cap decides what is drawn, and a role
+        truncated here would be a node dropped without being counted.
+        """
         return [row["role"] for row in self._rows(
             "SELECT role, COUNT(*) n FROM jobs WHERE project_id = ?"
-            " GROUP BY role ORDER BY n DESC LIMIT 8", (project_id,))]
+            " GROUP BY role ORDER BY n DESC, role", (project_id,))]
 
     def _latest_run(self, job_id):
         return self._one(
@@ -422,13 +445,25 @@ class Reader:
         now = clock.now()
         with self._lock:
             cached = self._git_cache.get(repo_path)
-        if cached and (now - cached[0]).total_seconds() < GIT_CACHE_SECONDS:
-            return cached[1]
-        facts = gitfacts.facts(repo_path)          # deliberately outside the lock
-        value = {"branch": facts.get("branch"), "sha": _short(facts.get("head")),
-                 "clean": facts.get("clean")} if facts.get("is_git") else {}
+            fresh = cached and (now - cached[0]).total_seconds() < GIT_CACHE_SECONDS
+            if fresh:
+                return cached[1]
+            # A repo slower than the TTL would otherwise miss on every poll and
+            # fan out another six subprocesses each time. One caller refreshes;
+            # the rest keep the previous answer until it lands.
+            if repo_path in self._git_inflight and cached:
+                return cached[1]
+            self._git_inflight.add(repo_path)
+        try:
+            facts = gitfacts.facts(repo_path)      # deliberately outside the lock
+            value = {"branch": facts.get("branch"), "sha": _short(facts.get("head")),
+                     "clean": facts.get("clean")} if facts.get("is_git") else {}
+        finally:
+            with self._lock:
+                self._git_inflight.discard(repo_path)
         with self._lock:
-            self._git_cache[repo_path] = (now, value)
+            # Stamped on completion: a slow call must not be born already stale.
+            self._git_cache[repo_path] = (clock.now(), value)
         return value
 
     # --- activity ---------------------------------------------------------
@@ -450,12 +485,15 @@ class Reader:
             return {"entries": [], "has_more": False}
         limit = _clamp_limit(limit)
         kind = kind or ALL_KINDS
-        window = limit + 1
+        # Wider than the page so a group of entries sharing one timestamp can be
+        # seen whole and the cursor can step past it cleanly.
+        window = limit * 2 + TIE_WINDOW_SLACK
         entries = (self._transition_entries(project["id"], before, window, kind)
                    + self._gate_entries(project["id"], before, window, kind)
                    + self._event_entries(project["id"], before, window, kind))
         entries.sort(key=lambda entry: entry["at"], reverse=True)
-        return {"entries": entries[:limit], "has_more": len(entries) > limit}
+        page = _page_on_a_clean_boundary(entries, limit)
+        return {"entries": page, "has_more": len(entries) > len(page)}
 
     def _transition_entries(self, project_id, before, window, kind):
         wanted = [status for status, row in ACTIVITY_TRANSITIONS.items()
@@ -515,13 +553,27 @@ class Reader:
         } for row in self._rows(sql, params)]
 
     def _gate_decided_entries(self, project_id, before, window, kind):
-        wanted = [status for status, decided_kind in DECIDED_GATE_KINDS.items()
-                  if kind in (ALL_KINDS, decided_kind)]
-        if not wanted:
+        """Any gate carrying a decision, whatever the decision was called.
+
+        Selecting only the two statuses known today would silently hide a
+        decision recorded under a status added tomorrow, so an unrecognised one
+        is surfaced under "other" rather than dropped.
+        """
+        known = tuple(DECIDED_GATE_KINDS)
+        sql = "SELECT * FROM human_gates WHERE project_id = ? AND decided_at IS NOT NULL"
+        params = [project_id]
+        if kind == ALL_KINDS:
+            pass
+        elif kind in DECIDED_GATE_KINDS.values():
+            wanted = [status for status, mapped in DECIDED_GATE_KINDS.items()
+                      if mapped == kind]
+            sql += f" AND status IN ({', '.join('?' * len(wanted))})"
+            params.extend(wanted)
+        elif kind == "other":
+            sql += f" AND status NOT IN ({', '.join('?' * len(known))})"
+            params.extend(known)
+        else:
             return []
-        sql = ("SELECT * FROM human_gates WHERE project_id = ? AND decided_at IS NOT NULL"
-               f" AND status IN ({', '.join('?' * len(wanted))})")
-        params = [project_id, *wanted]
         if before:
             sql += " AND decided_at < ?"
             params.append(before)
@@ -529,8 +581,8 @@ class Reader:
         params.append(window)
         return [{
             "at": row["decided_at"],
-            "tone": "ok" if row["status"] == "APPROVED" else "bad",
-            "kind": DECIDED_GATE_KINDS[row["status"]],
+            "tone": {"APPROVED": "ok", "REJECTED": "bad"}.get(row["status"], "muted"),
+            "kind": DECIDED_GATE_KINDS.get(row["status"], "other"),
             "title": f"Gate {row['status'].lower()}",
             "detail": summary.truncate(row["question"], 120),
             "note": summary.truncate(row["decision_note"], 110),
@@ -573,6 +625,29 @@ _NODE_RANK = {summary.AGENT_ACTIVE: 0, summary.AGENT_WAITING: 1, summary.AGENT_S
 
 def _node_order(node):
     return (_NODE_RANK.get(node["status"], 9), node["id"] or "")
+
+
+def _page_on_a_clean_boundary(entries, limit):
+    """End a page between timestamps, never inside a group sharing one.
+
+    The next page is fetched with `... < the last timestamp returned`, so a page
+    ending in the middle of several entries stamped at the same instant would
+    skip the rest of that instant for ever. Retreating to the previous timestamp
+    costs a few rows and loses none. When the whole page is one instant there is
+    nothing to retreat to, so the entire group is served instead and the page
+    runs slightly long -- the one case where the cursor cannot otherwise move
+    without dropping something.
+    """
+    page = entries[:limit]
+    if len(entries) <= limit or not page:
+        return page
+    boundary = page[-1]["at"]
+    if entries[limit]["at"] != boundary:
+        return page              # the group ends inside the page; the cursor is clean
+    trimmed = [entry for entry in page if entry["at"] != boundary]
+    if trimmed:
+        return trimmed
+    return [entry for entry in entries if entry["at"] == boundary]
 
 
 def _clamp_limit(value):

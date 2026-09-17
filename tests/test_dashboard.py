@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -197,6 +198,51 @@ class LivenessTests(DashboardTestCase):
         self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_ACTIVE)
         self.assertEqual(state["active_count"], 1)
 
+    def test_a_declared_runtime_cannot_be_unbounded(self):
+        """metadata reaches a job from a worker's own subtask request.
+
+        `delegation._create` copies that dict wholesale, so `timeout_s` is
+        model-authored. An unbounded value would let a dead job hold a live node
+        for ever, which is the defect this grace period exists to prevent.
+        """
+        project = self.make_project()
+        hostile = ("inf", "Infinity", "1e9", 1e300, 10 ** 30, float("inf"),
+                   "99999999999999999999999999")
+        for index, declared in enumerate(hostile):
+            job = self.stale_running_job(project, 86400 * 30, subject=f"forever {index}",
+                                         metadata={"timeout_s": declared})
+            self.assertEqual(
+                _agent(self.reader().state(project["id"]), job["id"])["status"],
+                summary.AGENT_STALE, f"timeout_s={declared!r} defeated the liveness check")
+
+    def test_a_nonsense_runtime_is_garbage_not_the_maximum(self):
+        """`inf` is not a declaration of the longest allowed run; it is nonsense.
+
+        Aged between the default grace and the ceiling, so a value read as
+        garbage goes stale while a real 24h declaration does not.
+        """
+        project = self.make_project()
+        age = (reader_module.ACTIVE_WITHOUT_LEASE_SECONDS
+               + reader_module.MAX_DECLARED_GRACE_SECONDS) // 2
+        nonsense = self.stale_running_job(project, age, subject="nonsense",
+                                          metadata={"timeout_s": "inf"})
+        declared = self.stale_running_job(
+            project, age, subject="declared", role="evaluator",
+            metadata={"timeout_s": reader_module.MAX_DECLARED_GRACE_SECONDS})
+
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, nonsense["id"])["status"], summary.AGENT_STALE)
+        self.assertEqual(_agent(state, declared["id"])["status"], summary.AGENT_ACTIVE)
+
+    def test_a_garbage_runtime_falls_back_to_the_default(self):
+        project = self.make_project()
+        for index, declared in enumerate(("abc", None, -5, True, {"a": 1}, [1, 2], "nan")):
+            job = self.stale_running_job(project, 7000, subject=f"junk {index}",
+                                         metadata={"timeout_s": declared})
+            self.assertEqual(
+                _agent(self.reader().state(project["id"]), job["id"])["status"],
+                summary.AGENT_STALE, f"timeout_s={declared!r} was treated as a real grace")
+
     def test_a_declared_runtime_does_not_excuse_a_job_forever(self):
         project = self.make_project()
         job = self.stale_running_job(project, 86400 * 400, role="evaluator",
@@ -286,6 +332,28 @@ class NodeCapTests(DashboardTestCase):
         self.assertEqual(state["hidden_agents"], 4 - len(drawn_idle))
         self.assertGreater(state["hidden_agents"], 0)
 
+    def test_idle_capacity_is_counted_beyond_the_roles_that_fit(self):
+        """A mature project uses more roles than the graph can draw.
+
+        The role query is unlimited on purpose: a role truncated there would be
+        a node dropped without ever being counted as hidden.
+        """
+        project = self.make_project("mature")
+        roles = ("build", "reviewer", "qa", "security", "planner", "landing",
+                 "evaluator", "researcher", "investigator", "architect",
+                 "specialist", "benchmark", "freeze", "operator")
+        for role in roles:
+            job = self.make_job(project=project, role=role, subject=f"{role} history")
+            self.store.conn.execute(
+                "UPDATE jobs SET status = 'DONE', updated_at = ? WHERE id = ?",
+                (clock.iso(clock.now() - timedelta(days=400)), job["id"]))
+
+        state = self.reader().state(project["id"])
+        drawn = [a for a in state["agents"] if a["status"] == summary.AGENT_IDLE]
+        self.assertEqual(len(drawn), reader_module.MAX_AGENT_NODES)
+        self.assertEqual(state["hidden_agents"], len(roles) - reader_module.MAX_AGENT_NODES)
+        self.assertGreater(state["hidden_agents"], 0)
+
     def test_the_cap_bounds_the_whole_graph(self):
         self.assertLessEqual(len(self.state["agents"]), reader_module.MAX_AGENT_NODES)
 
@@ -352,6 +420,58 @@ class ActivityFilterTests(DashboardTestCase):
                         project_id=self.project["id"])
         entries = self.reader().activity(self.project["id"], limit=50, kind="gate")["entries"]
         self.assertTrue(any(e["title"] == "WAITING FOR HUMAN" for e in entries))
+
+
+class PagingInvariantTests(DashboardTestCase):
+    """Walking the log page by page must see exactly what one big read sees."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project()
+        for index in range(20):
+            self.running_job(self.project, subject=f"task {index}")
+        for index in range(4):
+            gate = gates.open_gate(self.store, "budget", f"question {index}",
+                                   project_id=self.project["id"])
+            gates.decide(self.store, gate["id"], approved=index % 2 == 0, actor="human")
+        # A pile of entries sharing one instant: the case a `<` cursor skips.
+        self.store.conn.execute(
+            "UPDATE job_transitions SET created_at = '2026-05-01T11:59:11+00:00'"
+            " WHERE id IN (SELECT id FROM job_transitions WHERE to_status = 'RUNNING'"
+            "              LIMIT 6)")
+        self.store.conn.execute(
+            "UPDATE human_gates SET decided_at = '2026-05-01T11:59:11+00:00'")
+
+    def walk(self, kind, limit):
+        reader = self.reader()
+        seen, before = [], None
+        for _ in range(200):
+            page = reader.activity(self.project["id"], limit=limit, before=before, kind=kind)
+            if not page["entries"]:
+                break
+            seen.extend(page["entries"])
+            if not page["has_more"]:
+                break
+            before = page["entries"][-1]["at"]
+        return seen
+
+    def test_paging_loses_nothing_and_repeats_nothing(self):
+        reader = self.reader()
+        for kind in ("all", "completed", "failed", "gate"):
+            truth = reader.activity(self.project["id"], limit=200, kind=kind)["entries"]
+            for limit in (1, 2, 3, 5, 7, 13):
+                walked = self.walk(kind, limit)
+                self.assertEqual(sorted(map(_key, walked)), sorted(map(_key, truth)),
+                                 f"kind={kind} limit={limit} paged differently")
+
+    def test_a_page_never_ends_inside_a_group_sharing_one_timestamp(self):
+        reader = self.reader()
+        page = reader.activity(self.project["id"], limit=5)
+        if page["has_more"]:
+            boundary = page["entries"][-1]["at"]
+            remainder = reader.activity(self.project["id"], limit=200, before=boundary)
+            self.assertFalse([e for e in remainder["entries"] if e["at"] == boundary],
+                             "entries at the cursor timestamp were left unreachable")
 
 
 class HumanGateTests(DashboardTestCase):
@@ -633,6 +753,36 @@ class HttpTests(DashboardTestCase):
             release.set()
             slow.join(timeout=10)
 
+    def test_a_slow_repository_is_looked_up_once_not_once_per_request(self):
+        """Concurrent polls reuse the last answer instead of each forking git."""
+        from devsupervisor import gitfacts
+
+        calls, entered, release = [], threading.Event(), threading.Event()
+        original = gitfacts.facts
+
+        def counting_facts(repo):
+            calls.append(repo)
+            entered.set()
+            release.wait(timeout=10)
+            return original(repo)
+
+        gitfacts.facts = counting_facts
+        self.addCleanup(setattr, gitfacts, "facts", original)
+        reader = self.server.reader
+        reader._git_cache.clear()
+        reader._git_cache[self.project["repo_path"]] = (clock.now() - timedelta(hours=1), {})
+
+        threads = [threading.Thread(target=lambda: self.get("/api/state"), daemon=True)
+                   for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        self.assertTrue(entered.wait(timeout=5))
+        time.sleep(0.3)                      # let the rest arrive and find it in flight
+        self.assertEqual(len(calls), 1, f"one refresh should serve them all, saw {len(calls)}")
+        release.set()
+        for thread in threads:
+            thread.join(timeout=10)
+
     def test_the_server_binds_only_to_loopback(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")
 
@@ -697,6 +847,10 @@ class HttpTests(DashboardTestCase):
         for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
             self.assertFalse(sink in source,
                              f"app.js must not build markup from durable text ({sink})")
+
+
+def _key(entry):
+    return (entry["at"], entry["title"], entry["detail"], entry["kind"])
 
 
 def _agent(state, job_id):
