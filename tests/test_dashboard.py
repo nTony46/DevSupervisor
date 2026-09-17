@@ -6,6 +6,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import timedelta
 from pathlib import Path
 
 from devsupervisor import clock, config, gates
@@ -129,6 +130,164 @@ class StatusMappingTests(DashboardTestCase):
 
         leases.acquire(self.store, job["id"], owner="scheduler")
         self.assertEqual(self.reader().state(project["id"])["leases"], 1)
+
+
+class LivenessTests(DashboardTestCase):
+    """A status column is a claim about the past; the graph is a claim about now."""
+
+    def stale_running_job(self, project, age_seconds, **fields):
+        job = self.running_job(project, **fields)
+        old = clock.iso(clock.now() - timedelta(seconds=age_seconds))
+        self.store.conn.execute("UPDATE jobs SET updated_at = ? WHERE id = ?",
+                                (old, job["id"]))
+        return self.store.get_job(job["id"])
+
+    def test_a_running_job_nobody_holds_is_not_a_live_agent(self):
+        project = self.make_project()
+        job = self.stale_running_job(
+            project, reader_module.ACTIVE_WITHOUT_LEASE_SECONDS * 2)
+
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_STALE)
+        self.assertEqual(state["active_count"], 0)
+        self.assertNotEqual(state["status"], "RUNNING")
+
+    def test_a_stale_agent_does_not_report_a_running_clock(self):
+        project = self.make_project()
+        job = self.stale_running_job(project, 86400 * 900)
+        self.assertIsNone(_agent(self.reader().state(project["id"]), job["id"])["elapsed_s"])
+
+    def test_a_stale_agent_does_not_describe_itself_as_working(self):
+        project = self.make_project()
+        job = self.stale_running_job(project, 86400 * 900, subject="schema drift")
+        line = _agent(self.reader().state(project["id"]), job["id"])["line"]
+        self.assertIn("Stalled", line)
+        self.assertNotIn("Implementing", line)
+
+    def test_a_held_lease_keeps_an_old_job_live(self):
+        """The lease is the evidence; without it the status column is just a claim."""
+        project = self.make_project()
+        job = self.stale_running_job(
+            project, reader_module.ACTIVE_WITHOUT_LEASE_SECONDS * 2)
+        leases.acquire(self.store, job["id"], owner="scheduler")
+
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_ACTIVE)
+        self.assertEqual(state["active_count"], 1)
+
+    def test_an_expired_lease_does_not_keep_a_job_live(self):
+        project = self.make_project()
+        job = self.stale_running_job(
+            project, reader_module.ACTIVE_WITHOUT_LEASE_SECONDS * 2)
+        leases.acquire(self.store, job["id"], owner="scheduler", ttl_seconds=1)
+        self.store.conn.execute(
+            "UPDATE leases SET expires_at = ? WHERE job_id = ?",
+            (clock.iso(clock.now() - timedelta(seconds=60)), job["id"]))
+
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_STALE)
+
+    def test_a_freshly_running_job_needs_no_lease_to_count(self):
+        project = self.make_project()
+        job = self.running_job(project)
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_ACTIVE)
+        self.assertEqual(state["active_count"], 1)
+
+    def test_a_parked_job_outside_the_current_work_leaves_the_graph(self):
+        """Blocked months ago under a goal nobody is on any more is history."""
+        project = self.make_project()
+        old_goal = self.make_goal(project=project, title="last quarter")
+        stranded = self.running_job(project, goal=old_goal, subject="abandoned")
+        self.store.transition(stranded["id"], machine.BLOCKED, actor="scheduler")
+        self.store.conn.execute(
+            "UPDATE jobs SET updated_at = ? WHERE id = ?",
+            (clock.iso(clock.now() - timedelta(
+                seconds=reader_module.STALE_AGENT_SECONDS * 2)), stranded["id"]))
+        current = self.make_goal(project=project, title="this week")
+        live = self.running_job(project, goal=current, subject="today")
+
+        ids = {a["id"] for a in self.reader().state(project["id"])["agents"]}
+        self.assertIn(live["id"], ids)
+        self.assertNotIn(stranded["id"], ids)
+
+    def test_a_parked_job_in_the_current_work_stays_visible(self):
+        project = self.make_project()
+        goal = self.make_goal(project=project)
+        job = self.running_job(project, goal=goal)
+        self.store.transition(job["id"], machine.BLOCKED, actor="scheduler")
+
+        ids = {a["id"] for a in self.reader().state(project["id"])["agents"]}
+        self.assertIn(job["id"], ids)
+
+
+class NodeCapTests(DashboardTestCase):
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project()
+        self.roles = ("build", "reviewer", "researcher", "planner", "security", "qa",
+                      "evaluator", "landing")
+        for role in self.roles:
+            for index in range(3):
+                self.running_job(self.project, role=role, subject=f"{role} {index}")
+        self.state = self.reader().state(self.project["id"])
+
+    def test_the_active_count_is_the_real_one_not_the_displayed_one(self):
+        self.assertEqual(self.state["active_count"], len(self.roles) * 3)
+        self.assertLessEqual(len(self.state["agents"]), reader_module.MAX_AGENT_NODES)
+
+    def test_hidden_agents_are_declared_rather_than_dropped_silently(self):
+        self.assertEqual(self.state["hidden_agents"],
+                         len(self.roles) * 3 - reader_module.MAX_AGENT_NODES)
+
+    def test_no_role_with_running_work_is_offered_as_idle_capacity(self):
+        busy = {job["role"] for job in
+                self.store.list_jobs(project_id=self.project["id"], status=machine.RUNNING)}
+        for agent in self.state["agents"]:
+            if agent["status"] == summary.AGENT_IDLE:
+                self.assertNotIn(agent["role"], busy,
+                                 f"{agent['role']} has running jobs but is shown idle")
+
+    def test_the_cap_bounds_the_whole_graph(self):
+        self.assertLessEqual(len(self.state["agents"]), reader_module.MAX_AGENT_NODES)
+
+
+class ActivityFilterTests(DashboardTestCase):
+    """The filter that answers "what failed" must not be the one that hides it."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project()
+        self.failed = self.running_job(self.project, subject="the old failure")
+        self.store.transition(self.failed["id"], machine.FAILED, actor="scheduler")
+        old = clock.iso(clock.now() - timedelta(days=30))
+        self.store.conn.execute(
+            "UPDATE job_transitions SET created_at = ? WHERE job_id = ?",
+            (old, self.failed["id"]))
+        for index in range(60):                 # bury it under newer noise
+            self.running_job(self.project, subject=f"newer {index}")
+
+    def test_an_old_failure_is_found_under_a_page_of_newer_activity(self):
+        entries = self.reader().activity(self.project["id"], limit=50, kind="failed")["entries"]
+        self.assertTrue(entries, "a failure in durable state must be reachable")
+        self.assertEqual(entries[0]["job_id"], self.failed["id"])
+
+    def test_the_unfiltered_log_still_pages(self):
+        page = self.reader().activity(self.project["id"], limit=50)
+        self.assertEqual(len(page["entries"]), 50)
+        self.assertTrue(page["has_more"])
+
+    def test_each_filter_returns_only_its_own_kind(self):
+        reader = self.reader()
+        for kind in ("completed", "failed", "gate", "running"):
+            for entry in reader.activity(self.project["id"], limit=50, kind=kind)["entries"]:
+                self.assertEqual(entry["kind"], kind)
+
+    def test_a_gate_is_reachable_through_the_gate_filter_alone(self):
+        gates.open_gate(self.store, "strategy", "an old question",
+                        project_id=self.project["id"])
+        entries = self.reader().activity(self.project["id"], limit=50, kind="gate")["entries"]
+        self.assertTrue(any(e["title"] == "WAITING FOR HUMAN" for e in entries))
 
 
 class HumanGateTests(DashboardTestCase):
@@ -405,7 +564,14 @@ class HttpTests(DashboardTestCase):
         self.assertTrue(self.store.list_jobs(), "the jobs table is still there")
 
     def test_no_request_path_can_read_the_filesystem(self):
-        for path in ("/../../etc/passwd", "/static/../reader.py", "/reader.py",
+        """Probes that WOULD resolve to a real file if routing touched the disk.
+
+        `/../reader.py` sits next to the static directory and `../../../../etc`
+        climbs out of the package: a filesystem-backed route serves both. Only
+        paths that exist can tell an explicit route map from a lucky 404.
+        """
+        for path in ("/../reader.py", "/../summary.py", "/../../cli.py",
+                     "/../../../../../../etc/passwd", "/static/index.html",
                      "/api/nope"):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(self.base + path, timeout=5)

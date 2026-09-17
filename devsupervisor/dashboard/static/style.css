@@ -114,6 +114,7 @@ main {
 .wires line { stroke: #24314f; stroke-width: 1; }
 .wires line.live { stroke: color-mix(in srgb, var(--active) 55%, transparent); }
 .wires line.gate { stroke: color-mix(in srgb, var(--gate) 55%, transparent); }
+.wires line.stale { stroke: #3a3524; stroke-dasharray: 2 5; }
 .wires .rel { stroke: #2b3a5e; stroke-dasharray: 3 4; fill: none; }
 .tier { position: relative; display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; }
 .tier-workers { margin-top: 68px; }
@@ -174,6 +175,17 @@ button.node:hover, button.node:focus-visible {
   border-color: color-mix(in srgb, var(--bad) 38%, transparent);
 }
 .node[data-status="COMPLETE"] .state { color: var(--ok); }
+/* A job claiming to run with nobody holding it. Named, not hidden. */
+.node[data-status="STALE"] { border-color: color-mix(in srgb, var(--gate) 30%, transparent); opacity: 0.75; }
+.node[data-status="STALE"] .state { color: var(--gate); }
+.node.more-agents {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dim);
+  border-style: dashed;
+  background: transparent;
+}
 .node.gate {
   border-color: color-mix(in srgb, var(--gate) 55%, transparent);
   background: linear-gradient(180deg, #1b1a14, #12131d);

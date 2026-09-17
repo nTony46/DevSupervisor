@@ -94,7 +94,9 @@ devsup dashboard          # or: python3 -m devsupervisor.dashboard
 
 then open `http://127.0.0.1:8765` (`--port` to change it). It binds to loopback
 only and refuses every HTTP method that is not a read; the database is opened
-`mode=ro`, so the dashboard cannot alter supervisor state.
+`mode=ro` with `query_only`, so no query it runs can change a row. (SQLite still
+creates the usual `-wal`/`-shm` sidecars next to the database, so the runtime
+root must be writable even though no supervisor data is altered.)
 
 The page shows the current pipeline, a live agent graph (supervisor at the
 centre, active workers lit, idle role capacity greyed out), and a chronological
@@ -153,6 +155,8 @@ so the suite never touches a real runtime root.
 
 - Local and single-machine. One supervisor holds a lock at a time; the only
   bundled UI is the read-only localhost dashboard.
+- The dashboard shows at most 12 agent nodes at once, declaring the remainder
+  as a count rather than drawing them.
 - Two providers: a deterministic `mock` (default, free) and `claude-cli`, which
   shells out to the `claude` CLI and must be on `PATH`.
 - Run from a checkout. There is no `pip install`, no entry point beyond

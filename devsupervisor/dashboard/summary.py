@@ -28,7 +28,6 @@ ROLE_VERBS = {
     "evaluator": "Evaluating",
     "researcher": "Researching",
     "investigator": "Investigating",
-    "experiment": "Running",
     "landing": "Landing",
     "freeze": "Freezing",
     "operator": "Operating",
@@ -47,7 +46,7 @@ ROLE_NOUNS = {
 # question is "where is this work", not "which of nine role names ran".
 STAGE_ORDER = (
     ("Plan", ("planner", "architect")),
-    ("Investigate", ("investigator", "researcher", "specialist", "benchmark", "experiment")),
+    ("Investigate", ("investigator", "researcher", "specialist", "benchmark")),
     ("Build", ("build",)),
     ("Review", ("reviewer", "security", "qa")),
     ("Land", ("landing", "freeze")),
@@ -57,9 +56,12 @@ STAGE_ORDER = (
 STAGE_COMPLETE, STAGE_ACTIVE, STAGE_UPCOMING, STAGE_BLOCKED = (
     "complete", "active", "upcoming", "blocked")
 
-# Node status vocabulary for the agent graph.
+# Node status vocabulary for the agent graph. STALE is not a job status: it is
+# a job claiming to run with nobody holding it, which the operator needs to see
+# named rather than hidden or dressed up as work in progress.
 AGENT_ACTIVE, AGENT_WAITING, AGENT_BLOCKED = "ACTIVE", "WAITING", "BLOCKED"
 AGENT_COMPLETE, AGENT_FAILED, AGENT_IDLE = "COMPLETE", "FAILED", "IDLE"
+AGENT_STALE = "STALE"
 
 _ATTENTION = frozenset({machine.BLOCKED, machine.FAILED})
 _UNSTARTED = frozenset({machine.PLANNED, machine.READY, machine.REVISION_READY})
@@ -135,6 +137,11 @@ def truncate(text, limit):
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def stalled_line(job):
+    """A stalled job is not doing anything, so it must not read as if it were."""
+    return truncate(f"Stalled, no lease holder: {subject_of(job)}", MAX_ACTION_CHARS)
 
 
 def agent_status(job, recently_complete=False):

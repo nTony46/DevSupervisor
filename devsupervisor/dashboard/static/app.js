@@ -53,7 +53,8 @@ function renderHeader(state) {
   ui.status.querySelector('.label').textContent = status;
   const git = state.git || {};
   ui.git.textContent = git.branch ? `${git.branch} @ ${git.sha || '—'}${git.clean === false ? ' *' : ''}` : '';
-  const live = (state.agents || []).filter((a) => a.status === 'ACTIVE').length;
+  // The server counts active jobs; the agent list it sends may be capped.
+  const live = state.active_count || 0;
   ui.active.textContent = `${live} active`;
   ui.leases.textContent = `${state.leases || 0} lease${state.leases === 1 ? '' : 's'}`;
   const spend = state.spend || {};
@@ -125,7 +126,7 @@ function workerNode(agent) {
     box.addEventListener('click', () => showDetail(agent.id));
   }
   box.appendChild(node('div', 'role', agent.role || 'agent'));
-  const mark = agent.status === 'ACTIVE' ? '●' : agent.status === 'IDLE' ? '○' : '◆';
+  const mark = { ACTIVE: '●', IDLE: '○', STALE: '⚠' }[agent.status] || '◆';
   box.appendChild(node('div', 'state', `${mark} ${agent.status}${elapsed(agent.elapsed_s)}`));
   box.appendChild(node('div', 'line', agent.line || ''));
   return box;
@@ -139,6 +140,10 @@ function renderGraph(state) {
     ui.workers.appendChild(node('div', 'empty', 'No agents registered for this project'));
   }
   agents.forEach((agent) => ui.workers.appendChild(workerNode(agent)));
+  if (state.hidden_agents) {
+    ui.workers.appendChild(node('div', 'node more-agents',
+      `+${state.hidden_agents} more not shown`));
+  }
   requestAnimationFrame(() => drawWires(state));
 }
 
@@ -163,6 +168,7 @@ function drawWires(state) {
     const status = worker.dataset.status;
     if (status === 'ACTIVE') line.classList.add('live');
     if (status === 'WAITING') line.classList.add('gate');
+    if (status === 'STALE') line.classList.add('stale');
     ui.wires.appendChild(line);
   });
   // Real delegation edges only: a reviewer to the work it reviews, a revision

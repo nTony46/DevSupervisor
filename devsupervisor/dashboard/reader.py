@@ -10,6 +10,7 @@ next request, which is what makes history survive a restart for free.
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 from .. import clock, config, gitfacts
@@ -20,6 +21,11 @@ from . import summary
 RECENT_COMPLETE_SECONDS = 900
 # How long a parked job keeps a node in the live graph once it stops moving.
 STALE_AGENT_SECONDS = 86400
+# How long a job may claim to be running with nobody holding its lease before
+# the graph stops believing it. `leases.recover_orphans` calls exactly this
+# state "nobody's work until it is put back", but it only runs when the
+# scheduler runs -- which is precisely when nobody is watching the dashboard.
+ACTIVE_WITHOUT_LEASE_SECONDS = 3600
 MAX_AGENT_NODES = 12
 # The graph is a glance, not a reading surface; the full question is in `devsup gates`.
 SUPERVISOR_LINE_CHARS = 120
@@ -33,28 +39,37 @@ MAX_ACTIVITY_LIMIT = 200
 # WORK_COMPLETE earns its line even though review usually follows immediately:
 # a job whose worker has finished but whose reviewer has not started is not an
 # active agent, so without this row it would be invisible on the whole page.
+# label, tone, filter kind. The kind is what the UI's filters select on, and it
+# is applied in SQL: filtering a fixed window in Python would let a single old
+# failure fall off the end of a page full of newer noise and report "nothing".
 ACTIVITY_TRANSITIONS = {
-    machine.RUNNING: ("started", "run"),
-    machine.WORK_COMPLETE: ("work complete", "ok"),
-    machine.UNDER_REVIEW: ("under review", "run"),
-    machine.APPROVED: ("approved", "ok"),
-    machine.REJECTED: ("rejected", "bad"),
-    machine.REVISION_READY: ("revision started", "warn"),
-    machine.LANDING: ("landing", "run"),
-    machine.VERIFIED: ("verified", "ok"),
-    machine.EVALUATED: ("evaluated", "ok"),
-    machine.DONE: ("done", "ok"),
-    machine.BLOCKED: ("blocked", "bad"),
-    machine.FAILED: ("failed", "bad"),
-    machine.WAITING_HUMAN: ("waiting for human", "gate"),
-    machine.CANCELLED: ("cancelled", "muted"),
-    machine.SUPERSEDED: ("superseded", "muted"),
-    machine.PAUSED: ("paused", "muted"),
+    machine.RUNNING: ("started", "run", "running"),
+    machine.WORK_COMPLETE: ("work complete", "ok", "completed"),
+    machine.UNDER_REVIEW: ("under review", "run", "running"),
+    machine.APPROVED: ("approved", "ok", "completed"),
+    machine.REJECTED: ("rejected", "bad", "failed"),
+    machine.REVISION_READY: ("revision started", "warn", "running"),
+    machine.LANDING: ("landing", "run", "running"),
+    machine.VERIFIED: ("verified", "ok", "completed"),
+    machine.EVALUATED: ("evaluated", "ok", "completed"),
+    machine.DONE: ("done", "ok", "completed"),
+    machine.BLOCKED: ("blocked", "bad", "failed"),
+    machine.FAILED: ("failed", "bad", "failed"),
+    machine.WAITING_HUMAN: ("waiting for human", "gate", "gate"),
+    machine.CANCELLED: ("cancelled", "muted", "other"),
+    machine.SUPERSEDED: ("superseded", "muted", "other"),
+    machine.PAUSED: ("paused", "muted", "other"),
 }
 
 # Only these event kinds reach the activity log. An allowlist, so a future event
 # carrying a prompt or a credential cannot leak into the UI by default.
-ACTIVITY_EVENTS = {"landing.completed": ("landed", "ok")}
+ACTIVITY_EVENTS = {"landing.completed": ("landed", "ok", "completed")}
+
+ALL_KINDS = "all"
+# A goal in one of these is finished; its jobs are history, not current work.
+CLOSED_GOAL_STATUSES = ("DONE", "CANCELLED", "ABANDONED")
+# Which gate rows answer which filter, in SQL rather than after the fact.
+GATE_STATUS_FOR_KIND = {"gate": "OPEN", "completed": "APPROVED", "failed": "REJECTED"}
 
 
 class StateUnavailable(DevSupervisorError):
@@ -78,6 +93,9 @@ class Reader:
         except sqlite3.Error as exc:
             raise StateUnavailable(f"cannot read {self.db_path}: {exc}") from exc
         self._git_cache = {}
+        # Guards the connection only. Git runs outside it: six subprocesses with
+        # a 30s timeout each must never block an unrelated endpoint.
+        self._lock = threading.RLock()
 
     def close(self):
         self.conn.close()
@@ -85,7 +103,8 @@ class Reader:
     # --- plumbing ---------------------------------------------------------
 
     def _rows(self, sql, params=()):
-        return [dict(row) for row in self.conn.execute(sql, params)]
+        with self._lock:
+            return [dict(row) for row in self.conn.execute(sql, params)]
 
     def _jobs(self, sql, params=()):
         """Job rows with the JSON columns the dashboard reads already decoded."""
@@ -95,7 +114,8 @@ class Reader:
         return rows
 
     def _one(self, sql, params=()):
-        row = self.conn.execute(sql, params).fetchone()
+        with self._lock:
+            row = self.conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
     # --- projects ---------------------------------------------------------
@@ -122,21 +142,22 @@ class Reader:
         project = self.resolve_project(project_key)
         if project is None:
             return {"project": None, "status": "NO ACTIVE RUN", "projects": [],
-                    "agents": [], "pipeline": [], "gates": [], "stages_note": ""}
+                    "agents": [], "pipeline": [], "gates": []}
         project_id = project["id"]
         jobs = self._jobs("SELECT * FROM jobs WHERE project_id = ? ORDER BY updated_at DESC",
                           (project_id,))
         gates = self._open_gates(project_id)
         goal, scope_jobs = self._current_scope(jobs)
-        agents = self._agents(project_id, jobs, {job["id"] for job in scope_jobs})
-        lock = self._one("SELECT * FROM supervisor_lock WHERE id = 1")
         leases = self._active_leases(project_id)
+        agents, counts = self._agents(project_id, jobs, {job["id"] for job in scope_jobs},
+                                      live_leases=leases)
+        lock = self._one("SELECT * FROM supervisor_lock WHERE id = 1")
         return {
             "project": {"id": project_id, "name": project["name"],
                         "repo_path": project["repo_path"]},
             "projects": self.projects(),
-            "status": self._global_status(agents, gates, scope_jobs, lock),
-            "supervisor": self._supervisor_node(agents, gates, goal, lock),
+            "status": self._global_status(counts, gates, scope_jobs, lock),
+            "supervisor": self._supervisor_node(counts, gates, goal, lock),
             "goal": goal,
             "git": self._git(project["repo_path"]),
             "spend": self._spend(project_id, scope_jobs),
@@ -144,11 +165,11 @@ class Reader:
             "pipeline": summary.pipeline(scope_jobs),
             "current": summary.current_line(scope_jobs),
             "agents": agents,
+            "active_count": counts["active"],
+            "hidden_agents": counts["hidden"],
             "gates": gates,
             "generated_at": clock.now_iso(),
         }
-
-    CLOSED_GOALS = frozenset({"DONE", "CANCELLED", "ABANDONED"})
 
     def _current_scope(self, jobs):
         """The goal the supervisor is working on now, and the jobs under it.
@@ -178,13 +199,15 @@ class Reader:
         return goal, scope
 
     def _closed_goal_ids(self):
+        placeholders = ", ".join("?" * len(CLOSED_GOAL_STATUSES))
         return {row["id"] for row in self._rows(
-            "SELECT id FROM goals WHERE status IN ('DONE', 'CANCELLED', 'ABANDONED')")}
+            f"SELECT id FROM goals WHERE status IN ({placeholders})",
+            tuple(CLOSED_GOAL_STATUSES))}
 
-    def _global_status(self, agents, gates, scope_jobs, lock):
+    def _global_status(self, counts, gates, scope_jobs, lock):
         if gates:
             return "WAITING FOR HUMAN"
-        if any(agent["status"] == summary.AGENT_ACTIVE for agent in agents):
+        if counts["active"]:
             return "RUNNING"
         if lock:
             return "RUNNING" if clock.parse(lock["expires_at"]) > clock.now() else "RECOVERING"
@@ -194,8 +217,8 @@ class Reader:
             return "IDLE"
         return "NO ACTIVE RUN"
 
-    def _supervisor_node(self, agents, gates, goal, lock):
-        active = [a for a in agents if a["status"] == summary.AGENT_ACTIVE]
+    def _supervisor_node(self, counts, gates, goal, lock):
+        active = counts["active"]
         if gates:
             gate = gates[-1]
             waiting = (f"{len(gates)} decisions pending" if len(gates) > 1
@@ -205,7 +228,7 @@ class Reader:
                     "detail": gate["id"], "note": waiting}
         if active:
             return {"status": "RUNNING",
-                    "line": f"{len(active)} agent{'s' if len(active) != 1 else ''} working",
+                    "line": f"{active} agent{'s' if active != 1 else ''} working",
                     "detail": goal["title"] if goal else ""}
         if lock and clock.parse(lock["expires_at"]) > clock.now():
             return {"status": "RUNNING", "line": "Planning next step",
@@ -215,37 +238,55 @@ class Reader:
 
     # --- agents -----------------------------------------------------------
 
-    def _agents(self, project_id, jobs, scope_ids=()):
+    def _agents(self, project_id, jobs, scope_ids=(), live_leases=()):
         """Real jobs first; then the roles this project uses, greyed out.
 
         An idle node is role capacity, not a fabricated agent: it carries no job
         id, and only roles this project has actually dispatched are listed.
 
-        A job that is running is always shown. A job merely parked or blocked is
-        shown only while it is still part of the current work, because a node
-        that stopped moving weeks ago is history, not an agent.
+        A job that is running is shown while it is genuinely running. A job
+        merely parked or blocked is shown only while it is still part of the
+        current work, because a node that stopped moving weeks ago is history.
         """
         now = clock.now()
         scope_ids = set(scope_ids)
-        shown, nodes = [], []
+        leased = set(live_leases)
+        nodes, busy = [], set()
         for job in jobs:
-            recent = self._recently_complete(job, now)
-            status = summary.agent_status(job, recently_complete=recent)
+            status = self._status_for(job, now, leased)
             if status == summary.AGENT_IDLE:
                 continue
-            if status != summary.AGENT_ACTIVE and not self._is_current(job, scope_ids, now):
+            if status not in _ALWAYS_SHOWN and not self._is_current(job, scope_ids, now):
                 continue
-            if len(nodes) >= MAX_AGENT_NODES:
-                break
+            # Every role with live work is busy, including one whose nodes fall
+            # past the display cap: otherwise the graph would offer it as free
+            # capacity while three of its jobs are running.
+            busy.add(job["role"])
             nodes.append(self._agent_node(job, status, now))
-            shown.append(job["role"])
-        busy = set(shown)
+        nodes.sort(key=_node_order)
+        shown = nodes[:MAX_AGENT_NODES]
         for role in self._roles_used(project_id):
-            if role not in busy:
-                nodes.append({"id": None, "role": role, "status": summary.AGENT_IDLE,
+            if role not in busy and len(shown) < MAX_AGENT_NODES:
+                shown.append({"id": None, "role": role, "status": summary.AGENT_IDLE,
                               "line": "", "elapsed_s": None, "reviews": None,
                               "revision_of": None})
-        return nodes
+        return shown, {"active": sum(1 for n in nodes if n["status"] == summary.AGENT_ACTIVE),
+                       "hidden": max(0, len(nodes) - len(nodes[:MAX_AGENT_NODES]))}
+
+    def _status_for(self, job, now, leased):
+        """The graph's status for a job, with orphans told apart from workers.
+
+        DevSupervisor's own reconciliation treats DISPATCHED or RUNNING with no
+        lease holder as orphaned work. A dashboard that repeats the status
+        column would show a crashed worker as a live agent with a running clock.
+        """
+        status = summary.agent_status(job, recently_complete=self._recently_complete(job, now))
+        if status != summary.AGENT_ACTIVE:
+            return status
+        if job["id"] in leased:
+            return status
+        age = (now - clock.parse(job["updated_at"])).total_seconds()
+        return status if age <= ACTIVE_WITHOUT_LEASE_SECONDS else summary.AGENT_STALE
 
     def _agent_node(self, job, status, now):
         run = self._latest_run(job["id"])
@@ -253,12 +294,14 @@ class Reader:
         elapsed = None
         if status == summary.AGENT_ACTIVE and started:
             elapsed = max(0, int((now - clock.parse(started)).total_seconds()))
+        line = (summary.stalled_line(job) if status == summary.AGENT_STALE
+                else summary.action_line(job))
         return {
             "id": job["id"],
             "role": job["role"],
             "status": status,
             "job_status": job["status"],
-            "line": summary.action_line(job),
+            "line": line,
             "elapsed_s": elapsed,
             "reviews": job["reviews_job_id"],
             "revision_of": job["revision_of"],
@@ -333,10 +376,11 @@ class Reader:
                     " ORDER BY created_at", (project_id,))]
 
     def _active_leases(self, project_id):
+        """Job ids whose lease is held and unexpired."""
         now = clock.now_iso()
-        return self._rows(
+        return [row["job_id"] for row in self._rows(
             "SELECT l.job_id FROM leases l JOIN jobs j ON j.id = l.job_id"
-            " WHERE j.project_id = ? AND l.expires_at > ?", (project_id, now))
+            " WHERE j.project_id = ? AND l.expires_at > ?", (project_id, now))]
 
     def _spend(self, project_id, scope_jobs):
         total = self._one(
@@ -352,14 +396,16 @@ class Reader:
         return {"project_usd": round(total["total"], 2), "scope_usd": round(scope_total, 2)}
 
     def _git(self, repo_path):
-        cached = self._git_cache.get(repo_path)
         now = clock.now()
+        with self._lock:
+            cached = self._git_cache.get(repo_path)
         if cached and (now - cached[0]).total_seconds() < GIT_CACHE_SECONDS:
             return cached[1]
-        facts = gitfacts.facts(repo_path)
+        facts = gitfacts.facts(repo_path)          # deliberately outside the lock
         value = {"branch": facts.get("branch"), "sha": _short(facts.get("head")),
                  "clean": facts.get("clean")} if facts.get("is_git") else {}
-        self._git_cache[repo_path] = (now, value)
+        with self._lock:
+            self._git_cache[repo_path] = (now, value)
         return value
 
     # --- activity ---------------------------------------------------------
@@ -371,26 +417,33 @@ class Reader:
         Three durable sources are merged: job transitions (what moved), gate rows
         (what a human was asked), and an allowlisted set of events (what landed).
         Nothing is kept in server memory, so the log is identical after a restart.
+
+        The kind filter is pushed into each query rather than applied to the
+        result. Filtering afterwards would search only the newest rows, so one
+        old failure under a thousand newer transitions would report "nothing".
         """
         project = self.resolve_project(project_key)
         if project is None:
             return {"entries": [], "has_more": False}
         limit = _clamp_limit(limit)
-        window = limit * 4
-        entries = (self._transition_entries(project["id"], before, window)
-                   + self._gate_entries(project["id"], before, window)
-                   + self._event_entries(project["id"], before, window))
-        entries = [entry for entry in entries if _matches(entry, kind)]
+        kind = kind or ALL_KINDS
+        window = limit + 1
+        entries = (self._transition_entries(project["id"], before, window, kind)
+                   + self._gate_entries(project["id"], before, window, kind)
+                   + self._event_entries(project["id"], before, window, kind))
         entries.sort(key=lambda entry: entry["at"], reverse=True)
         return {"entries": entries[:limit], "has_more": len(entries) > limit}
 
-    def _transition_entries(self, project_id, before, window):
-        sql = ("SELECT t.job_id, t.to_status, t.reason, t.created_at, j.role, j.result_sha,"
+    def _transition_entries(self, project_id, before, window, kind):
+        wanted = [status for status, row in ACTIVITY_TRANSITIONS.items()
+                  if kind == ALL_KINDS or row[2] == kind]
+        if not wanted:
+            return []
+        sql = ("SELECT t.job_id, t.to_status, t.reason, t.created_at, j.role,"
                " j.status AS job_status, j.metadata"
                " FROM job_transitions t JOIN jobs j ON j.id = t.job_id"
-               " WHERE j.project_id = ? AND t.to_status IN"
-               f" ({', '.join('?' * len(ACTIVITY_TRANSITIONS))})")
-        params = [project_id, *ACTIVITY_TRANSITIONS]
+               f" WHERE j.project_id = ? AND t.to_status IN ({', '.join('?' * len(wanted))})")
+        params = [project_id, *wanted]
         if before:
             sql += " AND t.created_at < ?"
             params.append(before)
@@ -398,11 +451,11 @@ class Reader:
         params.append(window)
         entries = []
         for row in self._rows(sql, params):
-            label, tone = ACTIVITY_TRANSITIONS[row["to_status"]]
+            label, tone, entry_kind = ACTIVITY_TRANSITIONS[row["to_status"]]
             job = {"id": row["job_id"], "role": row["role"], "status": row["job_status"],
                    "metadata": _json(row["metadata"])}
             entries.append({
-                "at": row["created_at"], "tone": tone, "kind": _tone_kind(tone),
+                "at": row["created_at"], "tone": tone, "kind": entry_kind,
                 "title": f"{row['job_id']} {label}",
                 "detail": summary.subject_of(job),
                 "note": summary.truncate(row["reason"], 110),
@@ -410,9 +463,15 @@ class Reader:
             })
         return entries
 
-    def _gate_entries(self, project_id, before, window):
+    def _gate_entries(self, project_id, before, window, kind):
+        """Gates opened and gates decided, selected in SQL by what was asked for."""
+        if kind != ALL_KINDS and kind not in GATE_STATUS_FOR_KIND:
+            return []
         sql = "SELECT * FROM human_gates WHERE project_id = ?"
         params = [project_id]
+        if kind != ALL_KINDS:
+            sql += " AND status = ?"
+            params.append(GATE_STATUS_FOR_KIND[kind])
         if before:
             sql += " AND created_at < ?"
             params.append(before)
@@ -420,28 +479,38 @@ class Reader:
         params.append(window)
         entries = []
         for row in self._rows(sql, params):
-            entries.append({
-                "at": row["created_at"], "tone": "gate", "kind": "gate",
-                "title": "WAITING FOR HUMAN" if row["status"] == "OPEN" else "Human gate",
-                "detail": summary.truncate(row["question"], 120),
-                "note": row["id"], "job_id": row["job_id"], "role": None,
-            })
-            if row["decided_at"] and (not before or row["decided_at"] < before):
+            question = summary.truncate(row["question"], 120)
+            if kind in (ALL_KINDS, "gate"):
                 entries.append({
-                    "at": row["decided_at"],
-                    "tone": "ok" if row["status"] == "APPROVED" else "bad",
-                    "kind": "gate",
-                    "title": f"Gate {row['status'].lower()}",
-                    "detail": summary.truncate(row["question"], 120),
-                    "note": summary.truncate(row["decision_note"], 110),
+                    "at": row["created_at"], "tone": "gate", "kind": "gate",
+                    "title": "WAITING FOR HUMAN" if row["status"] == "OPEN" else "Human gate",
+                    "detail": question, "note": row["id"],
                     "job_id": row["job_id"], "role": None,
                 })
+            decided_kind = {"APPROVED": "completed", "REJECTED": "failed"}.get(row["status"])
+            if not row["decided_at"] or (before and row["decided_at"] >= before):
+                continue
+            if kind not in (ALL_KINDS, decided_kind):
+                continue
+            entries.append({
+                "at": row["decided_at"],
+                "tone": "ok" if row["status"] == "APPROVED" else "bad",
+                "kind": decided_kind or "other",
+                "title": f"Gate {row['status'].lower()}",
+                "detail": question,
+                "note": summary.truncate(row["decision_note"], 110),
+                "job_id": row["job_id"], "role": None,
+            })
         return entries
 
-    def _event_entries(self, project_id, before, window):
-        placeholders = ", ".join("?" * len(ACTIVITY_EVENTS))
-        sql = (f"SELECT * FROM events WHERE project_id = ? AND kind IN ({placeholders})")
-        params = [project_id, *ACTIVITY_EVENTS]
+    def _event_entries(self, project_id, before, window, kind):
+        wanted = [name for name, row in ACTIVITY_EVENTS.items()
+                  if kind == ALL_KINDS or row[2] == kind]
+        if not wanted:
+            return []
+        sql = ("SELECT * FROM events WHERE project_id = ?"
+               f" AND kind IN ({', '.join('?' * len(wanted))})")
+        params = [project_id, *wanted]
         if before:
             sql += " AND created_at < ?"
             params.append(before)
@@ -449,16 +518,27 @@ class Reader:
         params.append(window)
         entries = []
         for row in self._rows(sql, params):
-            label, tone = ACTIVITY_EVENTS[row["kind"]]
+            label, tone, entry_kind = ACTIVITY_EVENTS[row["kind"]]
             payload = _json(row["payload"])
             entries.append({
-                "at": row["created_at"], "tone": tone, "kind": _tone_kind(tone),
+                "at": row["created_at"], "tone": tone, "kind": entry_kind,
                 "title": label.upper(),
                 "detail": _short(payload.get("sha")) or "",
                 "note": summary.truncate(payload.get("lane") or "", 110),
                 "job_id": row["job_id"], "role": None,
             })
         return entries
+
+
+# Statuses that earn a node however old the job is: they are claims about now.
+_ALWAYS_SHOWN = frozenset({summary.AGENT_ACTIVE, summary.AGENT_STALE})
+# Live work first, then things needing attention, then the rest.
+_NODE_RANK = {summary.AGENT_ACTIVE: 0, summary.AGENT_WAITING: 1, summary.AGENT_STALE: 2,
+              summary.AGENT_FAILED: 3, summary.AGENT_BLOCKED: 4, summary.AGENT_COMPLETE: 5}
+
+
+def _node_order(node):
+    return (_NODE_RANK.get(node["status"], 9), node["id"] or "")
 
 
 def _clamp_limit(value):
@@ -470,12 +550,6 @@ def _clamp_limit(value):
     return max(1, min(requested, MAX_ACTIVITY_LIMIT))
 
 
-def _matches(entry, kind):
-    if not kind or kind == "all":
-        return True
-    return entry["kind"] == kind
-
-
 def _json(raw):
     if isinstance(raw, dict):
         return raw
@@ -484,10 +558,6 @@ def _json(raw):
     except ValueError:
         return {}
     return value if isinstance(value, dict) else {}
-
-
-def _tone_kind(tone):
-    return {"ok": "completed", "bad": "failed", "gate": "gate"}.get(tone, "running")
 
 
 def _short(sha):
