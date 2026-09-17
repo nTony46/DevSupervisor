@@ -1,5 +1,42 @@
+# Python
 __pycache__/
-*.pyc
-.DS_Store
-.venv/
+*.py[cod]
 *.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# DevSupervisor runtime / durable state.
+# The real runtime root is $DEVSUPERVISOR_HOME (default ~/.devsupervisor) and
+# lives outside this repo; these patterns only catch a root pointed in here.
+.devsupervisor/
+supervisor.db
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+logs/
+*.log
+
+# Local environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
