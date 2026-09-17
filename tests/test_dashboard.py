@@ -187,6 +187,24 @@ class LivenessTests(DashboardTestCase):
         state = self.reader().state(project["id"])
         self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_STALE)
 
+    def test_a_job_that_declared_a_long_runtime_is_not_called_stalled(self):
+        """The scheduler honours metadata.timeout_s and never renews a lease."""
+        project = self.make_project()
+        job = self.stale_running_job(project, 7000, role="evaluator",
+                                     metadata={"timeout_s": 10800})
+
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_ACTIVE)
+        self.assertEqual(state["active_count"], 1)
+
+    def test_a_declared_runtime_does_not_excuse_a_job_forever(self):
+        project = self.make_project()
+        job = self.stale_running_job(project, 86400 * 400, role="evaluator",
+                                     metadata={"timeout_s": 10800})
+        self.assertEqual(
+            _agent(self.reader().state(project["id"]), job["id"])["status"],
+            summary.AGENT_STALE)
+
     def test_a_freshly_running_job_needs_no_lease_to_count(self):
         project = self.make_project()
         job = self.running_job(project)
@@ -195,15 +213,18 @@ class LivenessTests(DashboardTestCase):
         self.assertEqual(state["active_count"], 1)
 
     def test_a_parked_job_outside_the_current_work_leaves_the_graph(self):
-        """Blocked months ago under a goal nobody is on any more is history."""
+        """Blocked months ago under a goal nobody is on any more is history.
+
+        The age is absolute on purpose: scaling the fixture by the constant
+        under test would make the constant impossible to get wrong.
+        """
         project = self.make_project()
         old_goal = self.make_goal(project=project, title="last quarter")
         stranded = self.running_job(project, goal=old_goal, subject="abandoned")
         self.store.transition(stranded["id"], machine.BLOCKED, actor="scheduler")
         self.store.conn.execute(
             "UPDATE jobs SET updated_at = ? WHERE id = ?",
-            (clock.iso(clock.now() - timedelta(
-                seconds=reader_module.STALE_AGENT_SECONDS * 2)), stranded["id"]))
+            (clock.iso(clock.now() - timedelta(days=400)), stranded["id"]))
         current = self.make_goal(project=project, title="this week")
         live = self.running_job(project, goal=current, subject="today")
 
@@ -248,6 +269,23 @@ class NodeCapTests(DashboardTestCase):
                 self.assertNotIn(agent["role"], busy,
                                  f"{agent['role']} has running jobs but is shown idle")
 
+    def test_idle_capacity_the_cap_dropped_is_declared_too(self):
+        """Eleven live jobs leave one slot; the roles that miss out are counted."""
+        project = self.make_project("crowded")
+        for index in range(reader_module.MAX_AGENT_NODES - 1):
+            self.running_job(project, role="build", subject=f"shard {index}")
+        for role in ("reviewer", "qa", "security", "planner"):
+            old = self.finished_job(project, role=role, subject=f"{role} history")
+            self.store.conn.execute(          # long finished: capacity, not a node
+                "UPDATE jobs SET updated_at = ? WHERE id = ?",
+                (clock.iso(clock.now() - timedelta(days=400)), old["id"]))
+
+        state = self.reader().state(project["id"])
+        drawn_idle = [a for a in state["agents"] if a["status"] == summary.AGENT_IDLE]
+        self.assertEqual(len(state["agents"]), reader_module.MAX_AGENT_NODES)
+        self.assertEqual(state["hidden_agents"], 4 - len(drawn_idle))
+        self.assertGreater(state["hidden_agents"], 0)
+
     def test_the_cap_bounds_the_whole_graph(self):
         self.assertLessEqual(len(self.state["agents"]), reader_module.MAX_AGENT_NODES)
 
@@ -282,6 +320,32 @@ class ActivityFilterTests(DashboardTestCase):
         for kind in ("completed", "failed", "gate", "running"):
             for entry in reader.activity(self.project["id"], limit=50, kind=kind)["entries"]:
                 self.assertEqual(entry["kind"], kind)
+
+    def test_a_recent_decision_on_an_old_gate_is_reachable(self):
+        """The decision sorts by when it was answered, not when it was asked."""
+        gate = gates.open_gate(self.store, "strategy", "asked long ago",
+                               project_id=self.project["id"])
+        self.store.conn.execute("UPDATE human_gates SET created_at = ? WHERE id = ?",
+                                (clock.iso(clock.now() - timedelta(days=400)), gate["id"]))
+        for index in range(60):                 # bury the question, not the answer
+            other = gates.open_gate(self.store, "budget", f"noise {index}",
+                                    project_id=self.project["id"])
+            gates.decide(self.store, other["id"], approved=True, actor="human")
+        gates.decide(self.store, gate["id"], approved=True, actor="human")
+
+        reader = self.reader()
+        for kind in ("all", "completed"):
+            entries = reader.activity(self.project["id"], limit=50, kind=kind)["entries"]
+            notes = [e["detail"] for e in entries if e["title"] == "Gate approved"]
+            self.assertIn("asked long ago", notes,
+                          f"the newest decision is unreachable under kind={kind}")
+
+    def test_a_rejected_gate_answers_the_failed_filter(self):
+        gate = gates.open_gate(self.store, "strategy", "a refused plan",
+                               project_id=self.project["id"])
+        gates.decide(self.store, gate["id"], approved=False, actor="human")
+        entries = self.reader().activity(self.project["id"], limit=50, kind="failed")["entries"]
+        self.assertIn("Gate rejected", [e["title"] for e in entries])
 
     def test_a_gate_is_reachable_through_the_gate_filter_alone(self):
         gates.open_gate(self.store, "strategy", "an old question",
@@ -539,6 +603,36 @@ class HttpTests(DashboardTestCase):
         with urllib.request.urlopen(self.base + path, timeout=5) as response:
             return json.loads(response.read().decode())
 
+    def test_a_slow_repository_does_not_block_unrelated_endpoints(self):
+        """git runs outside the connection lock, so one slow repo is not an outage.
+
+        Blocked on an Event rather than a sleep: the assertion is that the second
+        request completes *while* the first is still inside gitfacts, which is a
+        fact about locking, not about timing.
+        """
+        from devsupervisor import gitfacts
+
+        entered, release = threading.Event(), threading.Event()
+        original = gitfacts.facts
+
+        def blocking_facts(repo):
+            entered.set()
+            release.wait(timeout=10)
+            return original(repo)
+
+        gitfacts.facts = blocking_facts
+        self.addCleanup(setattr, gitfacts, "facts", original)
+        self.server.reader._git_cache.clear()
+
+        slow = threading.Thread(target=lambda: self.get("/api/state"), daemon=True)
+        slow.start()
+        self.assertTrue(entered.wait(timeout=5), "the state request never reached git")
+        try:
+            self.assertIn("projects", self.get("/api/projects"))
+        finally:
+            release.set()
+            slow.join(timeout=10)
+
     def test_the_server_binds_only_to_loopback(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")
 
@@ -577,6 +671,19 @@ class HttpTests(DashboardTestCase):
                 urllib.request.urlopen(self.base + path, timeout=5)
             self.assertEqual(caught.exception.code, 404)
             caught.exception.close()
+
+    def test_only_the_published_assets_are_served(self):
+        """A file that appears in the static directory is not thereby public."""
+        static = (Path(__file__).resolve().parents[1] / "devsupervisor" / "dashboard"
+                  / "static")
+        planted = static / "not-published.txt"
+        planted.write_text("should never be served")
+        self.addCleanup(planted.unlink)
+
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(self.base + "/not-published.txt", timeout=5)
+        self.assertEqual(caught.exception.code, 404)
+        caught.exception.close()
 
     def test_durable_text_is_carried_as_data_not_markup(self):
         hostile = self.make_job(project=self.project, subject="x",

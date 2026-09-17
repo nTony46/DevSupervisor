@@ -203,7 +203,11 @@ function localMoment(iso) {
 
 function detailValue(key, value) {
   if (key.endsWith('_at')) return localMoment(value);
-  if (key === 'cost_usd') return `$${Number(value).toFixed(2)}`;
+  // A cost is shown only when it is non-zero, so it must never round to $0.00.
+  if (key === 'cost_usd') {
+    const cost = Number(value);
+    return `$${cost.toFixed(cost < 0.01 ? 4 : 2)}`;
+  }
   return value;
 }
 

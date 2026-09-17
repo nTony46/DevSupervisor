@@ -7,7 +7,6 @@ the transport as well as by the read-only database connection.
 """
 
 import json
-import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,7 +33,6 @@ class DashboardServer(ThreadingHTTPServer):
     def __init__(self, address, reader):
         super().__init__(address, DashboardHandler)
         self.reader = reader
-        self.lock = threading.Lock()
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -74,8 +72,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND,
                                    body=body)
         try:
-            with self.server.lock:
-                payload = handler(query)
+            # No lock here. `Reader` guards its own connection, and a lock at
+            # this level would hold every endpoint behind one request's git
+            # subprocesses -- six invocations at a 30s timeout each.
+            payload = handler(query)
         except StateUnavailable as exc:
             return self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND, body=body)
         except Exception as exc:                              # pragma: no cover - defensive

@@ -25,6 +25,11 @@ STALE_AGENT_SECONDS = 86400
 # the graph stops believing it. `leases.recover_orphans` calls exactly this
 # state "nobody's work until it is put back", but it only runs when the
 # scheduler runs -- which is precisely when nobody is watching the dashboard.
+#
+# A job that declares a longer runtime gets it: the scheduler honours
+# `metadata.timeout_s` when it runs a job, and leases are never renewed, so a
+# genuine long run outlives its own lease. Believing the shorter of the two
+# would report live work as stalled.
 ACTIVE_WITHOUT_LEASE_SECONDS = 3600
 MAX_AGENT_NODES = 12
 # The graph is a glance, not a reading surface; the full question is in `devsup gates`.
@@ -68,8 +73,8 @@ ACTIVITY_EVENTS = {"landing.completed": ("landed", "ok", "completed")}
 ALL_KINDS = "all"
 # A goal in one of these is finished; its jobs are history, not current work.
 CLOSED_GOAL_STATUSES = ("DONE", "CANCELLED", "ABANDONED")
-# Which gate rows answer which filter, in SQL rather than after the fact.
-GATE_STATUS_FOR_KIND = {"gate": "OPEN", "completed": "APPROVED", "failed": "REJECTED"}
+# A decided gate reads as a completion or a failure, selected in SQL.
+DECIDED_GATE_KINDS = {"APPROVED": "completed", "REJECTED": "failed"}
 
 
 class StateUnavailable(DevSupervisorError):
@@ -265,13 +270,22 @@ class Reader:
             nodes.append(self._agent_node(job, status, now))
         nodes.sort(key=_node_order)
         shown = nodes[:MAX_AGENT_NODES]
-        for role in self._roles_used(project_id):
-            if role not in busy and len(shown) < MAX_AGENT_NODES:
-                shown.append({"id": None, "role": role, "status": summary.AGENT_IDLE,
-                              "line": "", "elapsed_s": None, "reviews": None,
-                              "revision_of": None})
-        return shown, {"active": sum(1 for n in nodes if n["status"] == summary.AGENT_ACTIVE),
-                       "hidden": max(0, len(nodes) - len(nodes[:MAX_AGENT_NODES]))}
+        hidden_jobs = len(nodes) - len(shown)
+
+        idle_roles = [role for role in self._roles_used(project_id) if role not in busy]
+        room = MAX_AGENT_NODES - len(shown)
+        for role in idle_roles[:room]:
+            shown.append({"id": None, "role": role, "status": summary.AGENT_IDLE,
+                          "line": "", "elapsed_s": None, "reviews": None,
+                          "revision_of": None})
+        hidden_roles = len(idle_roles) - min(room, len(idle_roles))
+
+        return shown, {
+            "active": sum(1 for n in nodes if n["status"] == summary.AGENT_ACTIVE),
+            # Both kinds of omission are declared: a job node the cap dropped,
+            # and a role whose idle capacity there was no room left to draw.
+            "hidden": hidden_jobs + hidden_roles,
+        }
 
     def _status_for(self, job, now, leased):
         """The graph's status for a job, with orphans told apart from workers.
@@ -286,7 +300,16 @@ class Reader:
         if job["id"] in leased:
             return status
         age = (now - clock.parse(job["updated_at"])).total_seconds()
-        return status if age <= ACTIVE_WITHOUT_LEASE_SECONDS else summary.AGENT_STALE
+        return status if age <= self._grace_for(job) else summary.AGENT_STALE
+
+    @staticmethod
+    def _grace_for(job):
+        declared = (job.get("metadata") or {}).get("timeout_s")
+        try:
+            declared = float(declared)
+        except (TypeError, ValueError):
+            declared = 0
+        return max(ACTIVE_WITHOUT_LEASE_SECONDS, declared)
 
     def _agent_node(self, job, status, now):
         run = self._latest_run(job["id"])
@@ -464,44 +487,55 @@ class Reader:
         return entries
 
     def _gate_entries(self, project_id, before, window, kind):
-        """Gates opened and gates decided, selected in SQL by what was asked for."""
-        if kind != ALL_KINDS and kind not in GATE_STATUS_FOR_KIND:
+        """Gates raised and gates answered, as two queries.
+
+        A decision is a separate moment from the question. Deriving both from
+        one window ordered by `created_at` made the decision on a long-open gate
+        unreachable: it sorts by when it was answered, but it could only be
+        found by when it was asked.
+        """
+        return (self._gate_opened_entries(project_id, before, window, kind)
+                + self._gate_decided_entries(project_id, before, window, kind))
+
+    def _gate_opened_entries(self, project_id, before, window, kind):
+        if kind not in (ALL_KINDS, "gate"):
             return []
         sql = "SELECT * FROM human_gates WHERE project_id = ?"
         params = [project_id]
-        if kind != ALL_KINDS:
-            sql += " AND status = ?"
-            params.append(GATE_STATUS_FOR_KIND[kind])
         if before:
             sql += " AND created_at < ?"
             params.append(before)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(window)
-        entries = []
-        for row in self._rows(sql, params):
-            question = summary.truncate(row["question"], 120)
-            if kind in (ALL_KINDS, "gate"):
-                entries.append({
-                    "at": row["created_at"], "tone": "gate", "kind": "gate",
-                    "title": "WAITING FOR HUMAN" if row["status"] == "OPEN" else "Human gate",
-                    "detail": question, "note": row["id"],
-                    "job_id": row["job_id"], "role": None,
-                })
-            decided_kind = {"APPROVED": "completed", "REJECTED": "failed"}.get(row["status"])
-            if not row["decided_at"] or (before and row["decided_at"] >= before):
-                continue
-            if kind not in (ALL_KINDS, decided_kind):
-                continue
-            entries.append({
-                "at": row["decided_at"],
-                "tone": "ok" if row["status"] == "APPROVED" else "bad",
-                "kind": decided_kind or "other",
-                "title": f"Gate {row['status'].lower()}",
-                "detail": question,
-                "note": summary.truncate(row["decision_note"], 110),
-                "job_id": row["job_id"], "role": None,
-            })
-        return entries
+        return [{
+            "at": row["created_at"], "tone": "gate", "kind": "gate",
+            "title": "WAITING FOR HUMAN" if row["status"] == "OPEN" else "Human gate",
+            "detail": summary.truncate(row["question"], 120), "note": row["id"],
+            "job_id": row["job_id"], "role": None,
+        } for row in self._rows(sql, params)]
+
+    def _gate_decided_entries(self, project_id, before, window, kind):
+        wanted = [status for status, decided_kind in DECIDED_GATE_KINDS.items()
+                  if kind in (ALL_KINDS, decided_kind)]
+        if not wanted:
+            return []
+        sql = ("SELECT * FROM human_gates WHERE project_id = ? AND decided_at IS NOT NULL"
+               f" AND status IN ({', '.join('?' * len(wanted))})")
+        params = [project_id, *wanted]
+        if before:
+            sql += " AND decided_at < ?"
+            params.append(before)
+        sql += " ORDER BY decided_at DESC LIMIT ?"
+        params.append(window)
+        return [{
+            "at": row["decided_at"],
+            "tone": "ok" if row["status"] == "APPROVED" else "bad",
+            "kind": DECIDED_GATE_KINDS[row["status"]],
+            "title": f"Gate {row['status'].lower()}",
+            "detail": summary.truncate(row["question"], 120),
+            "note": summary.truncate(row["decision_note"], 110),
+            "job_id": row["job_id"], "role": None,
+        } for row in self._rows(sql, params)]
 
     def _event_entries(self, project_id, before, window, kind):
         wanted = [name for name, row in ACTIVITY_EVENTS.items()
