@@ -522,6 +522,11 @@ class PagingInvariantTests(DashboardTestCase):
         self.assertTrue(page["has_more"], "the rest of the group was reported as absent")
         self.assertTrue(page.get("truncated_group"))
 
+    def test_a_complete_log_is_never_declared_truncated(self):
+        """Distinct timestamps at limit=1 must not look like a tied group."""
+        page = self.reader().activity(self.project["id"], limit=1)
+        self.assertFalse(page.get("truncated_group"))
+
     def test_a_page_never_ends_inside_a_group_sharing_one_timestamp(self):
         reader = self.reader()
         page = reader.activity(self.project["id"], limit=5)

@@ -511,7 +511,9 @@ class Reader:
         # A group of entries sharing one instant that is larger than the window
         # cannot be paged by a timestamp cursor: there is no order within it to
         # resume from. Saying so beats ending the log as though nothing remains.
-        saturated = len(entries) >= window and bool(page) and all(
+        # A single-entry page trivially shares its own timestamp, so requiring
+        # more than one keeps `limit=1` from declaring a group on every page.
+        saturated = len(entries) >= window and len(page) > 1 and all(
             entry["at"] == page[-1]["at"] for entry in page)
         return {"entries": page,
                 "has_more": len(entries) > len(page) or saturated,
