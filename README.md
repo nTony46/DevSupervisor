@@ -84,6 +84,30 @@ Useful commands: `devsup jobs`, `devsup job show <id>`, `devsup gates`,
 `devsup runs <job-id>`, `devsup memory list|curate|adopt`, `devsup retrospect`,
 `devsup routing`, `devsup permissions`, `devsup import-handoffs`.
 
+## Dashboard
+
+A read-only operator view of what the supervisor is doing right now:
+
+```bash
+devsup dashboard          # or: python3 -m devsupervisor.dashboard
+```
+
+then open `http://127.0.0.1:8765` (`--port` to change it). It binds to loopback
+only and refuses every HTTP method that is not a read; the database is opened
+`mode=ro`, so the dashboard cannot alter supervisor state.
+
+The page shows the current pipeline, a live agent graph (supervisor at the
+centre, active workers lit, idle role capacity greyed out), and a chronological
+activity log, plus branch/SHA, active lease count and spend. An open human gate
+takes over the page — it reports the decision needed, and you still answer it
+through `devsup approve|reject`.
+
+Everything is derived from durable state on each request — job transitions, gate
+rows, runs and landing events — and the dashboard adds no tables of its own, so
+history survives closing the tab, stopping the server, or rebooting. A project
+selector appears when more than one project is registered; each project's goal,
+pipeline, agents, gates, branch and spend are reported independently.
+
 ## How projects are represented
 
 A project is a registered repository. `devsup init <repo>` records its name,
@@ -121,14 +145,14 @@ instance; that is exactly what the test suite does.
 ./scripts/test.sh
 ```
 
-336 tests, stdlib `unittest`, no network and no paid calls (`tests/test_no_paid_calls.py`
+371 tests, stdlib `unittest`, no network and no paid calls (`tests/test_no_paid_calls.py`
 asserts the latter). Every test points `DEVSUPERVISOR_HOME` at a temp directory,
 so the suite never touches a real runtime root.
 
 ## Current limitations
 
-- Local and single-machine. One supervisor holds a lock at a time; there is no
-  server, daemon, or web UI.
+- Local and single-machine. One supervisor holds a lock at a time; the only
+  bundled UI is the read-only localhost dashboard.
 - Two providers: a deterministic `mock` (default, free) and `claude-cli`, which
   shells out to the `claude` CLI and must be on `PATH`.
 - Run from a checkout. There is no `pip install`, no entry point beyond

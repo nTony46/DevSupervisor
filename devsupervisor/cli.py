@@ -9,7 +9,8 @@ import json
 import signal
 import sys
 
-from . import __version__, artifacts, config, doctor, gates, gitfacts, metrics, retrospective
+from . import __version__, artifacts, config, dashboard, doctor, gates, gitfacts, metrics
+from . import retrospective
 from .errors import DevSupervisorError, GracefulExit
 from .handoffs import importer as handoff_importer
 from .handoffs import parser as handoff_parser
@@ -223,6 +224,29 @@ def cmd_doctor(store, args):
     checks = doctor.run(store)
     print(doctor.render(checks))
     return EXIT_OK if doctor.worst(checks) != doctor.FAIL else EXIT_ERROR
+
+
+def cmd_dashboard(store, args):
+    """Serve the read-only dashboard.
+
+    The supervisor's own store is closed first: the dashboard opens durable
+    state read-only for itself and must not hold a writable handle.
+    """
+    store.close()
+    try:
+        dashboard.serve(port=args.port, on_ready=_announce_dashboard)
+    except OSError as exc:
+        raise DevSupervisorError(
+            f"cannot serve on {dashboard.HOST}:{args.port}: {exc}") from exc
+    return EXIT_OK
+
+
+def _announce_dashboard(url):
+    # Flushed explicitly: the URL is the whole point of the command, and a
+    # redirected stdout would otherwise buffer it until the server stops.
+    print("DevSupervisor Dashboard", flush=True)
+    print(url, flush=True)
+    print("read-only; press Ctrl-C to stop", flush=True)
 
 
 def cmd_import_handoffs(store, args):
@@ -490,6 +514,10 @@ def build_parser():
 
     doctor_cmd = subs.add_parser("doctor", help="check this installation")
     doctor_cmd.set_defaults(func=cmd_doctor)
+
+    dash = subs.add_parser("dashboard", help="serve the read-only localhost dashboard")
+    dash.add_argument("--port", type=int, default=dashboard.DEFAULT_PORT)
+    dash.set_defaults(func=cmd_dashboard)
 
     imports = subs.add_parser("import-handoffs", help="reconcile prior agent handoffs")
     imports.add_argument("path")

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevSupervisor</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">DevSupervisor</div>
+  <label class="project">
+    <span class="k">Project</span>
+    <select id="project" aria-label="Project"></select>
+  </label>
+  <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
+  <div class="facts">
+    <span class="fact" id="git" title="branch @ sha"></span>
+    <span class="fact" id="active"></span>
+    <span class="fact" id="leases"></span>
+    <span class="fact" id="spend"></span>
+  </div>
+</header>
+
+<main>
+  <section class="panel pipeline-panel">
+    <h2>Current Pipeline</h2>
+    <div class="pipeline" id="pipeline"></div>
+    <p class="current" id="current"></p>
+  </section>
+
+  <section class="panel graph-panel">
+    <h2>Live Agent Graph</h2>
+    <div class="graph" id="graph">
+      <svg class="wires" id="wires" aria-hidden="true"></svg>
+      <div class="tier tier-top" id="tier-supervisor"></div>
+      <div class="tier tier-workers" id="tier-workers"></div>
+    </div>
+  </section>
+
+  <section class="panel activity-panel">
+    <div class="activity-head">
+      <h2>Recent Activity</h2>
+      <div class="filters" id="filters" role="group" aria-label="Filter activity">
+        <button type="button" data-kind="all" class="on">All</button>
+        <button type="button" data-kind="completed">Completed</button>
+        <button type="button" data-kind="failed">Failed</button>
+        <button type="button" data-kind="gate">Gates</button>
+      </div>
+    </div>
+    <ol class="activity" id="activity"></ol>
+    <button type="button" class="more" id="more" hidden>Load more</button>
+  </section>
+</main>
+
+<aside class="detail" id="detail" hidden aria-live="polite">
+  <div class="detail-head">
+    <span id="detail-title"></span>
+    <button type="button" id="detail-close" aria-label="Close">✕</button>
+  </div>
+  <dl id="detail-body"></dl>
+</aside>
+
+<p class="err" id="err" hidden></p>
+<script src="/app.js"></script>
+</body>
+</html>
