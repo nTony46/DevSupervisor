@@ -53,9 +53,18 @@ class ReadOnlyTests(DashboardTestCase):
         self.running_job(project)
         reader = self.reader()
 
-        for statement in ("UPDATE jobs SET status = 'DONE'",
-                          "INSERT INTO events (kind, created_at) VALUES ('x', 'y')",
-                          "DELETE FROM jobs"):
+        writes = ("UPDATE jobs SET status = 'DONE'",
+                  "INSERT INTO events (kind, created_at) VALUES ('x', 'y')",
+                  "DELETE FROM jobs")
+        for statement in writes:
+            with self.assertRaises(sqlite3.OperationalError):
+                reader.conn.execute(statement)
+
+        # `query_only` is a setting; `mode=ro` is the handle. Turning the first
+        # off must not be enough, or the process would hold a writable handle on
+        # authoritative state one PRAGMA away from using it.
+        reader.conn.execute("PRAGMA query_only=OFF")
+        for statement in writes:
             with self.assertRaises(sqlite3.OperationalError):
                 reader.conn.execute(statement)
 
@@ -158,6 +167,13 @@ class LivenessTests(DashboardTestCase):
         job = self.stale_running_job(project, 86400 * 900)
         self.assertIsNone(_agent(self.reader().state(project["id"]), job["id"])["elapsed_s"])
 
+    def test_the_current_line_does_not_describe_a_stalled_job_as_working(self):
+        project = self.make_project()
+        self.stale_running_job(project, 86400 * 900, role="reviewer", subject="wire size")
+        state = self.reader().state(project["id"])
+        self.assertNotIn("Reviewing", state["current"])
+        self.assertIn("Stalled", state["current"])
+
     def test_a_stale_agent_does_not_describe_itself_as_working(self):
         project = self.make_project()
         job = self.stale_running_job(project, 86400 * 900, subject="schema drift")
@@ -233,6 +249,14 @@ class LivenessTests(DashboardTestCase):
         state = self.reader().state(project["id"])
         self.assertEqual(_agent(state, nonsense["id"])["status"], summary.AGENT_STALE)
         self.assertEqual(_agent(state, declared["id"])["status"], summary.AGENT_ACTIVE)
+
+    def test_an_enormous_integer_does_not_take_the_page_down(self):
+        """float(10**400) raises OverflowError, which is not a ValueError."""
+        project = self.make_project()
+        job = self.stale_running_job(project, 86400 * 30, subject="huge",
+                                     metadata={"timeout_s": 10 ** 400})
+        state = self.reader().state(project["id"])
+        self.assertEqual(_agent(state, job["id"])["status"], summary.AGENT_STALE)
 
     def test_a_garbage_runtime_falls_back_to_the_default(self):
         project = self.make_project()
@@ -395,7 +419,10 @@ class ActivityFilterTests(DashboardTestCase):
                                project_id=self.project["id"])
         self.store.conn.execute("UPDATE human_gates SET created_at = ? WHERE id = ?",
                                 (clock.iso(clock.now() - timedelta(days=400)), gate["id"]))
-        for index in range(60):                 # bury the question, not the answer
+        # More noise than any per-source window, so the row can only be found
+        # by sorting on the column the decision actually carries.
+        noise = reader_module.MAX_ACTIVITY_LIMIT * 2 + reader_module.TIE_WINDOW_SLACK
+        for index in range(noise):          # bury the question, not the answer
             other = gates.open_gate(self.store, "budget", f"noise {index}",
                                     project_id=self.project["id"])
             gates.decide(self.store, other["id"], approved=True, actor="human")
@@ -414,6 +441,24 @@ class ActivityFilterTests(DashboardTestCase):
         gates.decide(self.store, gate["id"], approved=False, actor="human")
         entries = self.reader().activity(self.project["id"], limit=50, kind="failed")["entries"]
         self.assertIn("Gate rejected", [e["title"] for e in entries])
+
+    def test_a_decision_recorded_under_an_unknown_status_still_appears(self):
+        """Selecting only today's two statuses would hide tomorrow's silently."""
+        gate = gates.open_gate(self.store, "strategy", "an expired question",
+                               project_id=self.project["id"])
+        self.store.conn.execute(
+            "UPDATE human_gates SET status = 'EXPIRED', decided_at = ? WHERE id = ?",
+            (clock.now_iso(), gate["id"]))
+
+        reader = self.reader()
+        for kind in ("all", "other"):
+            titles = [e["title"] for e in
+                      reader.activity(self.project["id"], limit=50, kind=kind)["entries"]]
+            self.assertIn("Gate expired", titles, f"unreachable under kind={kind}")
+        for kind in ("completed", "failed", "gate"):
+            titles = [e["title"] for e in
+                      reader.activity(self.project["id"], limit=50, kind=kind)["entries"]]
+            self.assertNotIn("Gate expired", titles)
 
     def test_a_gate_is_reachable_through_the_gate_filter_alone(self):
         gates.open_gate(self.store, "strategy", "an old question",
@@ -463,6 +508,19 @@ class PagingInvariantTests(DashboardTestCase):
                 walked = self.walk(kind, limit)
                 self.assertEqual(sorted(map(_key, walked)), sorted(map(_key, truth)),
                                  f"kind={kind} limit={limit} paged differently")
+
+    def test_a_group_too_large_to_page_is_not_reported_as_the_end(self):
+        """A timestamp cursor cannot walk a group with no order inside it.
+
+        It must say so rather than hide the remainder behind a finished log.
+        """
+        instant = "2026-05-01T11:59:11+00:00"
+        self.store.conn.execute("UPDATE job_transitions SET created_at = ?", (instant,))
+        self.store.conn.execute(
+            "UPDATE human_gates SET created_at = ?, decided_at = ?", (instant, instant))
+        page = self.reader().activity(self.project["id"], limit=5)
+        self.assertTrue(page["has_more"], "the rest of the group was reported as absent")
+        self.assertTrue(page.get("truncated_group"))
 
     def test_a_page_never_ends_inside_a_group_sharing_one_timestamp(self):
         reader = self.reader()
@@ -782,6 +840,35 @@ class HttpTests(DashboardTestCase):
         release.set()
         for thread in threads:
             thread.join(timeout=10)
+
+    def test_a_cold_cache_is_also_looked_up_once(self):
+        """With nothing to fall back on, waiters wait rather than each forking git."""
+        from devsupervisor import gitfacts
+
+        calls, entered, release = [], threading.Event(), threading.Event()
+        original = gitfacts.facts
+
+        def counting_facts(repo):
+            calls.append(repo)
+            entered.set()
+            release.wait(timeout=10)
+            return original(repo)
+
+        gitfacts.facts = counting_facts
+        self.addCleanup(setattr, gitfacts, "facts", original)
+        self.server.reader._git_cache.clear()          # nothing cached at all
+
+        threads = [threading.Thread(target=lambda: self.get("/api/state"), daemon=True)
+                   for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        self.assertTrue(entered.wait(timeout=5))
+        time.sleep(0.3)
+        self.assertEqual(len(calls), 1,
+                         f"a cold cache should still look up once, saw {len(calls)}")
+        release.set()
+        for thread in threads:
+            thread.join(timeout=15)
 
     def test_the_server_binds_only_to_loopback(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")

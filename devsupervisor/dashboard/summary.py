@@ -201,10 +201,15 @@ def _stage_state(jobs):
     return STAGE_ACTIVE
 
 
-def current_line(jobs):
-    """The single line under the pipeline: what is happening right now."""
-    for status_group in (machine.ACTIVE, {machine.WAITING_HUMAN}, _ATTENTION):
-        for job in jobs:
-            if job.get("status") in status_group:
-                return action_line(job)
+def current_line(agents):
+    """The single line under the pipeline: what is happening right now.
+
+    Read from the graph's own nodes, not from job statuses. A job whose row
+    still says RUNNING while nobody holds it is drawn as stalled, and this line
+    must not go on describing it in the present tense.
+    """
+    for wanted in (AGENT_ACTIVE, AGENT_WAITING, AGENT_STALE, AGENT_FAILED, AGENT_BLOCKED):
+        for agent in agents:
+            if agent.get("status") == wanted:
+                return agent.get("line") or ""
     return ""

@@ -42,6 +42,8 @@ MAX_AGENT_NODES = 12
 # The graph is a glance, not a reading surface; the full question is in `devsup gates`.
 SUPERVISOR_LINE_CHARS = 120
 GIT_CACHE_SECONDS = 5
+# How long a caller with nothing cached waits for the refresh already running.
+GIT_WAIT_SECONDS = 30
 DEFAULT_ACTIVITY_LIMIT = 50
 MAX_ACTIVITY_LIMIT = 200
 TIE_WINDOW_SLACK = 16
@@ -106,7 +108,7 @@ class Reader:
         except sqlite3.Error as exc:
             raise StateUnavailable(f"cannot read {self.db_path}: {exc}") from exc
         self._git_cache = {}
-        self._git_inflight = set()
+        self._git_inflight = {}
         # Guards the connection only. Git runs outside it: six subprocesses with
         # a 30s timeout each must never block an unrelated endpoint.
         self._lock = threading.RLock()
@@ -177,7 +179,7 @@ class Reader:
             "spend": self._spend(project_id, scope_jobs),
             "leases": len(leases),
             "pipeline": summary.pipeline(scope_jobs),
-            "current": summary.current_line(scope_jobs),
+            "current": summary.current_line(agents),
             "agents": agents,
             "active_count": counts["active"],
             "hidden_agents": counts["hidden"],
@@ -318,14 +320,13 @@ class Reader:
         The declared value is untrusted: bounded, finite, and never negative.
         """
         declared = (job.get("metadata") or {}).get("timeout_s")
-        if isinstance(declared, bool):
-            declared = 0
         try:
             declared = float(declared)
-        except (TypeError, ValueError):
-            declared = 0
-        if not math.isfinite(declared) or declared < 0:
-            declared = 0
+        except (TypeError, ValueError, OverflowError):
+            declared = 0                 # a 400-digit integer is not a timeout
+        if not math.isfinite(declared):
+            declared = 0                 # `inf` declares nothing, so it is not the ceiling
+        # The floor absorbs the rest: booleans, zero and negatives all land on it.
         return max(ACTIVE_WITHOUT_LEASE_SECONDS,
                    min(declared, MAX_DECLARED_GRACE_SECONDS))
 
@@ -442,29 +443,43 @@ class Reader:
         return {"project_usd": round(total["total"], 2), "scope_usd": round(scope_total, 2)}
 
     def _git(self, repo_path):
+        """Branch and SHA for a repository, cached and looked up once at a time.
+
+        Git is slow and can hang, so it runs outside the connection lock. Only
+        one caller refreshes a given repository: others reuse the previous
+        answer if there is one, and wait for the refresh if there is not.
+        """
         now = clock.now()
         with self._lock:
             cached = self._git_cache.get(repo_path)
-            fresh = cached and (now - cached[0]).total_seconds() < GIT_CACHE_SECONDS
-            if fresh:
+            if cached and (now - cached[0]).total_seconds() < GIT_CACHE_SECONDS:
                 return cached[1]
-            # A repo slower than the TTL would otherwise miss on every poll and
-            # fan out another six subprocesses each time. One caller refreshes;
-            # the rest keep the previous answer until it lands.
-            if repo_path in self._git_inflight and cached:
-                return cached[1]
-            self._git_inflight.add(repo_path)
+            running = self._git_inflight.get(repo_path)
+            if running is not None and cached:
+                return cached[1]          # a stale answer now beats a fresh one later
+            if running is None:
+                running = threading.Event()
+                self._git_inflight[repo_path] = running
+                mine = True
+            else:
+                mine = False
+        if not mine:
+            running.wait(timeout=GIT_WAIT_SECONDS)
+            with self._lock:
+                cached = self._git_cache.get(repo_path)
+            return cached[1] if cached else {}
         try:
             facts = gitfacts.facts(repo_path)      # deliberately outside the lock
             value = {"branch": facts.get("branch"), "sha": _short(facts.get("head")),
                      "clean": facts.get("clean")} if facts.get("is_git") else {}
+            with self._lock:
+                # Stamped on completion: a slow call must not be born already stale.
+                self._git_cache[repo_path] = (clock.now(), value)
+            return value
         finally:
             with self._lock:
-                self._git_inflight.discard(repo_path)
-        with self._lock:
-            # Stamped on completion: a slow call must not be born already stale.
-            self._git_cache[repo_path] = (clock.now(), value)
-        return value
+                self._git_inflight.pop(repo_path, None)
+            running.set()                 # only after the result is readable
 
     # --- activity ---------------------------------------------------------
 
@@ -493,7 +508,14 @@ class Reader:
                    + self._event_entries(project["id"], before, window, kind))
         entries.sort(key=lambda entry: entry["at"], reverse=True)
         page = _page_on_a_clean_boundary(entries, limit)
-        return {"entries": page, "has_more": len(entries) > len(page)}
+        # A group of entries sharing one instant that is larger than the window
+        # cannot be paged by a timestamp cursor: there is no order within it to
+        # resume from. Saying so beats ending the log as though nothing remains.
+        saturated = len(entries) >= window and bool(page) and all(
+            entry["at"] == page[-1]["at"] for entry in page)
+        return {"entries": page,
+                "has_more": len(entries) > len(page) or saturated,
+                "truncated_group": saturated}
 
     def _transition_entries(self, project_id, before, window, kind):
         wanted = [status for status, row in ACTIVITY_TRANSITIONS.items()
