@@ -226,7 +226,7 @@ runtime root.
 [model routing](docs/model-routing.md) ·
 [safety and human gates](docs/security-and-human-gates.md) ·
 [acceptance tests](docs/acceptance-tests.md) ·
-[handoff reconciliation](docs/handoff-reconciliation.md)
+[bootstrap log](docs/BOOTSTRAP_LOG.md)
 
 ## License
 
