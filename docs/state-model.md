@@ -51,9 +51,9 @@ artifact_refs     created_at  updated_at
 `BUILD-line-range-001` is the durable identity. The process, the session id, and
 "Agent 4" are metadata. Reconciliation of prior work therefore keys on
 (repo, branch, base_sha, result_sha, task) — never on an agent number. The
-pre-restart Example handoffs prove why: three different sessions all called
-themselves "Agent 6", and one file labelled `agent6-*` is a report about a
-different project entirely.
+handoffs this project was bootstrapped from prove why: three different sessions
+all called themselves "Agent 6", and one file labelled `agent6-*` was a report
+about a different project entirely.
 
 ## Job state machine
 

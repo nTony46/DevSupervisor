@@ -81,12 +81,15 @@ review*, or *whether a gate is satisfied*. It proposes; the harness disposes.
 
 ## Project policy packs
 
-The core knows nothing about Example. A pack is a small declarative module that
-supplies: repo identity rules, protected paths, risk overrides, extra immutable
-rules, required verification commands, and human-gate triggers. Example's rules
-(exact-SHA landing, frozen benchmark isolation, harness-vs-product commit
-identity, paid-experiment gates) live in `devsupervisor/policy/packs/example.py`
-and nowhere else.
+The core knows nothing about any particular project. A pack is a small
+declarative module that supplies: repo identity rules, protected paths, risk
+overrides, extra immutable rules, required verification commands, and
+human-gate triggers. The repository ships one worked example,
+`devsupervisor/policy/packs/example.py` (exact-SHA landing, frozen benchmark
+isolation, harness-vs-product commit identity, paid-experiment gates). A real
+project's pack lives outside the repository, in `$DEVSUPERVISOR_HOME/packs/`,
+because it names that project — the registry loads every `*.py` there by the
+same `@register` mechanism.
 
 ## Why each piece of scaffolding exists
 

@@ -2,11 +2,11 @@
 
 ## Phase 1 — architecture and handoff reconciliation
 
-- Normalized repo context read-only. Canonical `~/Desktop/Example` was clean on
-  `eval/harness-v1`; switched to `main` (`6ca4ddd`) with a plain
-  branch switch. Residue after the switch is `scripts/effectiveness/**/__pycache__`
-  only — bytecode the eval branch's `.gitignore` covers and `main`'s does not.
-  Nothing lost, nothing deleted. Six agent worktrees inspected read-only, all clean.
+- Normalized repo context read-only. The target repository was clean on its
+  harness branch; switched to `main` with a plain branch switch. Residue after
+  the switch was `__pycache__` only — bytecode the harness branch's `.gitignore`
+  covers and `main`'s does not. Nothing lost, nothing deleted. Six agent
+  worktrees inspected read-only, all clean.
 - Reconciled 19 pre-restart handoffs into a logical job inventory keyed on
   `(repo, branch, base_sha, result_sha, task)`. Every merge claim was re-verified
   against git; all checked out. Three separate sessions call themselves
@@ -15,7 +15,7 @@
 - Froze the architecture: deterministic harness vs. LLM judgment, job state
   machine, context compiler, memory-candidate curation, reviewer independence,
   leases, project policy packs.
-- No Example product code touched.
+- No product code in the target repository touched.
 
 ## Phase 2 — durable state engine
 
@@ -131,13 +131,13 @@
   Key matching is now case-sensitive, values may not contain backticks (so prose
   naming `TOKEN=` is left alone), and lower-case keys need a long quoted value.
   A redactor that rewrites correct code is worse than one that misses a case.
-- Generic behaviour is proven on `examples/sample_project`, a small non-Example
+- Generic behaviour is proven on `examples/sample_project`, a small pack-less
   repository the harness knows nothing about.
 - 181 tests green.
 
-## Phase 8 — Example policy import and dry run
+## Phase 8 — project policy import and dry run
 
-- The Example pack encodes exact-SHA review and landing, frozen-benchmark
+- The first project pack encodes exact-SHA review and landing, frozen-benchmark
   immutability, the clean-room boundary around oracle and held-out data, the
   harness-versus-product commit-identity split, correctness-first effectiveness
   claims, and budget/benchmark gates. Nothing of it is in the core, which a test
@@ -148,16 +148,16 @@
   with no branch and no SHA becomes a BLOCKED triage job rather than an
   assertion.
 - Two handoff claims were checked rather than believed, and the check found a
-  subtlety worth keeping: `fix/identifier-collision` reads as *not*
-  landed against current `main`, because files it touched changed again in a
-  later commit, and as landed against `b25efad`, the SHA the handoff names.
+  subtlety worth keeping: one fix branch reads as *not* landed against current
+  `main`, because files it touched changed again in a later commit, and as
+  landed against the SHA the handoff actually names.
   `landed_by_content(..., against=...)` exists for that distinction.
 - Verification now runs over every handoff in a group, not just the most
   detailed one. A false claim in a secondary document is precisely what is worth
   surfacing, and it was invisible while only the best source was checked.
 - Dry run over the reconstructed state offers two reviewer jobs, each naming its
   exact candidate SHA, plus six open human gates. It dispatches nothing, records
-  no runs, and the Example repository's HEAD, status, and every ref are compared
+  no runs, and the target repository's HEAD, status, and every ref are compared
   before and after.
 - 206 tests green.
 

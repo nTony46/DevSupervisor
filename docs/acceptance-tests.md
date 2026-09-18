@@ -30,10 +30,10 @@ proves it. A criterion with no test is not met.
 | 23 | immutable rules cannot self-modify | `test_policy_immutable.py` |
 | 24 | curation cannot silently overwrite | `test_memory_curation.py`, `test_memory.py::test_existing_document_is_never_silently_overwritten` |
 | 25 | CLI supports normal use | `test_cli.py` |
-| 26 | generic behaviour on a non-Example project | `test_sample_project.py` |
-| 27 | Example handoffs imported and deduped | `test_handoff_import.py`, `test_example_dryrun.py::ExampleDryRunTests` |
-| 28 | Example dry run produces a coherent graph | `test_example_dryrun.py::test_the_dry_run_offers_reviews_of_exact_shas` |
-| 29 | no Example product code modified | `test_example_dryrun.py::ExampleDryRunTests._assert_repo_untouched` (HEAD, status, and every ref compared before and after) |
+| 26 | generic behaviour on a project with no pack | `test_sample_project.py` |
+| 27 | prior handoffs imported and deduped | `test_handoff_import.py` |
+| 28 | a dry run produces a coherent graph and dispatches nothing | `test_handoff_import.py`, `test_full_lifecycle.py` |
+| 29 | project rules can live outside the repository | `test_example_pack.py::ExternalPackTests` |
 | 30 | full suite green | `scripts/test.sh` — 259 tests |
 
 ## Model-routing follow-up
@@ -52,7 +52,7 @@ proves it. A criterion with no test is not met.
 
 | Requirement | Proven by |
 |---|---|
-| isolated Example worker roles receive the bypass flag | `test_permissions.py::PolicyDefaultTests`, `::test_an_isolated_worker_receives_the_bypass_flag` |
+| isolated worker roles receive the bypass flag | `test_permissions.py::PolicyDefaultTests`, `::test_an_isolated_worker_receives_the_bypass_flag` |
 | bypass is not authority to land, push, or rewrite | `test_permissions.py::BypassIsNotAuthorityTests` |
 | A/B arms cannot differ in permission mode | `test_permissions.py::PairLockPermissionTests` |
 | child jobs cannot bypass supervisor authorization | `test_permissions.py::ChildAuthorizationTests` |
@@ -68,5 +68,5 @@ proves it. A criterion with no test is not met.
   without explicit configuration.
 - **Zero network.** No test performs I/O outside `$DEVSUPERVISOR_HOME` (pointed
   at a temp dir) and its own fixtures.
-- **No writes to any real project.** Example tests are read-only or operate on
-  disposable fixture repos.
+- **No writes to any real project.** Every test operates on disposable fixture
+  repos.

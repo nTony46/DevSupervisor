@@ -40,6 +40,15 @@ def projects_dir():
     return home() / "projects"
 
 
+def packs_dir():
+    """Policy packs that belong to this machine rather than to the repository.
+
+    A pack names a real project and its rules, so the shipped tree carries only
+    a generic example; the packs a person actually runs live beside their data.
+    """
+    return home() / "packs"
+
+
 def project_dir(project_id):
     return projects_dir() / project_id
 

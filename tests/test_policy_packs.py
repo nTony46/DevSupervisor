@@ -7,7 +7,8 @@ from devsupervisor.policy import packs
 from devsupervisor.policy.packs import PolicyPack
 from tests.support import ROOT, HarnessTestCase
 
-PROJECT_NAMES = ("example", "otherapp", "benchmark", "another")
+# The core may know that packs exist; it may not know any particular one.
+PACK_REFERENCES = ("ExamplePack", r"packs\.example", r"import example")
 
 
 class FrozenDataPack(PolicyPack):
@@ -29,11 +30,11 @@ class FrozenDataPack(PolicyPack):
 class CoreAgnosticismTests(HarnessTestCase):
     def test_core_has_no_project_references(self):
         result = subprocess.run(
-            ["grep", "-rniE", "|".join(PROJECT_NAMES), str(ROOT / "devsupervisor")],
+            ["grep", "-rnE", "|".join(PACK_REFERENCES), str(ROOT / "devsupervisor")],
             capture_output=True, text=True)
         offending = [line for line in result.stdout.splitlines()
                      if "/policy/packs/" not in line]
-        self.assertEqual(offending, [], "project names leaked into the generic core")
+        self.assertEqual(offending, [], "a concrete pack leaked into the generic core")
 
     def test_example_rules_live_in_a_pack(self):
         self.assertIn("example", packs.available())

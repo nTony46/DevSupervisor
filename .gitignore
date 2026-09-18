@@ -40,3 +40,4 @@ logs/
 .DS_Store
 *.swp
 *~
+.devsupervisor-bootstrap.json

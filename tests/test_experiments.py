@@ -8,7 +8,7 @@ from tests.support import HarnessTestCase
 
 SHARED = dict(
     risk="HIGH", repo="/repo", base_sha="6ca4ddd", branch="eval/harness",
-    scope="Run the Benchmark task set and record outcome metrics.",
+    scope="Run the benchmark task set and record outcome metrics.",
     non_goals="Do not tune retrieval. Do not touch the frozen packages.",
     output_contract="raw results artifact",
     review_policy="independent",
@@ -23,7 +23,7 @@ class PairCreationTests(HarnessTestCase):
         self.goal = self.store.create_goal(self.project["id"], "Measure reuse ceiling")
         self.pair = experiments.create_pair(
             self.store, self.project["id"], "reuse ceiling",
-            {"control": None, "treatment": "Example context enabled"},
+            {"control": None, "treatment": "context enabled"},
             goal_id=self.goal["id"], job_type="experiment", **SHARED)
 
     def test_both_arms_share_every_locked_field(self):
@@ -35,7 +35,7 @@ class PairCreationTests(HarnessTestCase):
         described = experiments.describe(self.store, self.pair["pair_id"])
         treatments = {arm["arm"]: arm["treatment"] for arm in described["arms"]}
         self.assertEqual(treatments, {"control": None,
-                                      "treatment": "Example context enabled"})
+                                      "treatment": "context enabled"})
         self.assertEqual(described["differences"], {})
 
     def test_a_pair_needs_at_least_two_arms(self):

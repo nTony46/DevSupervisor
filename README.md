@@ -37,6 +37,14 @@ Other commands you'll reach for: `devsup jobs`, `devsup job show <id>`,
 `devsup gates`, `devsup approve|reject <gate-id>`, `devsup pause|resume`,
 `devsup memory list|curate|adopt`, `devsup retrospect`.
 
+**Project rules live in a policy pack**, not in the core: protected paths, a
+required verification command, extra hard rules, risk floors, and the subjects
+that must open a human gate. `devsupervisor/policy/packs/example.py` is a
+complete worked example. Copy it to `~/.devsupervisor/packs/<project>.py`,
+rename it, edit the rules, and pass `--pack <name>` to `devsup init`. Packs in
+that directory load by name exactly like the shipped one, and never need to be
+committed to this repository.
+
 ## Working with Claude
 
 There are two ways to put a real model behind the supervisor. Both use the
@@ -66,7 +74,7 @@ A brief that works well says four things: the goal, the constraints, what
 "done" means, and when to stop and ask. For example:
 
 ```
-# Example — identifier-miss fallback
+# myproject — identifier-miss fallback
 
 Goal: when a task description names an identifier that does not exist in the
 index, the retrieval packet must fall back to prose search instead of coming
