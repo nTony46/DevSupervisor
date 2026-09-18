@@ -303,14 +303,22 @@ main {
 /* --- graph ------------------------------------------------------------- */
 .graph { position: relative; min-height: 300px; padding: 12px 0 36px; }
 .wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.wires line { stroke: var(--wire); stroke-width: 1; transition: stroke 300ms var(--ease-out); }
-.wires line.live { stroke: color-mix(in srgb, var(--signal) 60%, transparent); stroke-width: 1.5; }
-.wires line.gate { stroke: color-mix(in srgb, var(--hold) 60%, transparent); stroke-dasharray: 4 4; }
-.wires line.stale { stroke: color-mix(in srgb, var(--hold) 35%, transparent); stroke-dasharray: 2 5; }
-.wires line.done { stroke: color-mix(in srgb, var(--landed) 40%, transparent); }
-.wires line.fault { stroke: color-mix(in srgb, var(--fault) 45%, transparent); }
-.wires line.hot { stroke: var(--ink-2); stroke-width: 1.5; }
-.wires line.live.hot { stroke: var(--signal); stroke-width: 2; }
+/* Each edge is a gradient: the supervisor's colour for its first quarter, the
+   worker's colour for the rest. The stops carry the colour; the class carries
+   how strongly the edge shows. */
+.wires line { stroke: var(--wire); stroke-width: 1; transition: stroke-width 200ms var(--ease-out); }
+.wires stop { stop-opacity: 0.22; transition: stop-color 300ms var(--ease-out), stop-opacity 200ms var(--ease-out); }
+.wires .live stop { stop-opacity: 0.65; }
+.wires .gate stop { stop-opacity: 0.65; }
+.wires .stale stop { stop-opacity: 0.4; }
+.wires .done stop { stop-opacity: 0.45; }
+.wires .fault stop { stop-opacity: 0.5; }
+.wires .hot stop { stop-opacity: 1; }
+.wires line.live { stroke-width: 1.5; }
+.wires line.gate { stroke-dasharray: 4 4; }
+.wires line.stale { stroke-dasharray: 2 5; }
+.wires line.hot { stroke-width: 1.5; }
+.wires line.live.hot { stroke-width: 2; }
 .wires .rel { stroke: color-mix(in srgb, var(--revise) 45%, transparent); stroke-dasharray: 3 4; fill: none; }
 .tier { position: relative; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
 .tier-workers { margin-top: 72px; }

@@ -321,16 +321,48 @@ function setAttrs(element, attrs) {
 
 const WIRE_CLASS = { ACTIVE: 'live', WAITING: 'gate', STALE: 'stale', COMPLETE: 'done',
   FAILED: 'fault', BLOCKED: 'fault' };
+// The colour each end of an edge takes from the node it touches.
+const TONE = { ACTIVE: 'signal', WAITING: 'hold', STALE: 'hold', COMPLETE: 'landed',
+  FAILED: 'fault', BLOCKED: 'fault', IDLE: 'dormant' };
+// Where along the edge the supervisor's colour gives way to the worker's.
+const GRADIENT_STOPS = [[0, 'from'], [0.15, 'from'], [0.4, 'to'], [1, 'to']];
+
+let wireDefs = null;
+
+function gradientFor(key) {
+  const gradient = document.createElementNS(SVG, 'linearGradient');
+  gradient.id = 'wire-' + key.replace(/[^A-Za-z0-9_-]/g, '_');
+  gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+  GRADIENT_STOPS.forEach(([offset, end]) => {
+    const stop = document.createElementNS(SVG, 'stop');
+    stop.setAttribute('offset', String(offset));
+    stop.dataset.end = end;
+    gradient.appendChild(stop);
+  });
+  return gradient;
+}
+
+function paintGradient(gradient, coords, fromTone, toTone) {
+  setAttrs(gradient, coords);
+  gradient.querySelectorAll('stop').forEach((stop) => {
+    const tone = stop.dataset.end === 'from' ? fromTone : toTone;
+    const colour = `var(--${tone})`;
+    if (stop.style.stopColor !== colour) stop.style.stopColor = colour;
+  });
+}
 
 function drawWires(state) {
   const box = ui.graph.getBoundingClientRect();
   ui.wires.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
   const root = ui.supervisor.querySelector('.node');
   if (!root) { ui.wires.replaceChildren(); wireNodes.clear(); return; }
+  if (!wireDefs) wireDefs = document.createElementNS(SVG, 'defs');
   const from = root.getBoundingClientRect();
   const origin = { x: from.left - box.left + from.width / 2, y: from.bottom - box.top };
+  const supervisorTone = TONE[root.dataset.status] || 'dormant';
   const positions = new Map();
-  const elements = [];
+  const elements = [wireDefs];
+  const gradients = [];
   const seen = new Set();
   ui.workers.querySelectorAll('.node').forEach((worker) => {
     const rect = worker.getBoundingClientRect();
@@ -340,16 +372,21 @@ function drawWires(state) {
     seen.add(key);
     let wire = wireNodes.get(key);
     if (!wire) {
-      wire = { line: document.createElementNS(SVG, 'line') };
+      wire = { line: document.createElementNS(SVG, 'line'), gradient: gradientFor(key) };
+      wire.line.style.stroke = `url(#${wire.gradient.id})`;
       wireNodes.set(key, wire);
     }
     const coords = { x1: origin.x, y1: origin.y, x2: point.x, y2: point.y };
     setAttrs(wire.line, coords);
     const status = worker.dataset.status;
-    wire.line.setAttribute('class', [WIRE_CLASS[status] || '', key === hotKey ? 'hot' : '']
-      .filter(Boolean).join(' '));
+    const classes = [WIRE_CLASS[status] || '', key === hotKey ? 'hot' : ''].filter(Boolean).join(' ');
+    wire.line.setAttribute('class', classes);
+    wire.gradient.setAttribute('class', classes);
+    paintGradient(wire.gradient, coords, supervisorTone, TONE[status] || 'dormant');
+    gradients.push(wire.gradient);
     elements.push(wire.line);
   });
+  reconcile(wireDefs, gradients);
   // Real delegation edges only: a reviewer to the work it reviews, a revision
   // to the attempt it replaces. Nothing decorative.
   (state.agents || []).forEach((agent) => {
@@ -384,6 +421,7 @@ function setHot(key) {
   wireNodes.forEach((wire, wireKey) => {
     if (!wire.line) return;
     wire.line.classList.toggle('hot', wireKey === key);
+    wire.gradient.classList.toggle('hot', wireKey === key);
   });
 }
 
