@@ -86,20 +86,28 @@ edit it, and pass `--pack <name>` to `devsup init`.
 └──────────────────────────────────────────────┘
 ```
 
-Anything where a wrong answer is a bug is code: state transitions, retries,
-leases, reviewer independence, gates, landing preconditions, secret redaction,
-cost accounting. The model handles judgment: decomposing a goal, writing the
-code or the review, choosing relevant memory.
+The split is simple: **the model does the thinking, plain Python does the
+bookkeeping.** The model breaks a goal into jobs, writes the code, and writes
+the review. Python tracks which job is in which state, retries failures, makes
+sure two workers never grab the same job, opens a gate when a human has to
+decide, checks that a change is safe to land, strips secrets, and counts the
+money. None of that is left to the model's judgment, because a wrong answer
+there is a bug, not a bad opinion.
 
-`devsup run` compiles a packet for each ready job, runs `claude -p` on it in a
-disposable worktree, parses the structured result the worker must end with,
-and advances the state machine. A Claude Code session with the `CLAUDE.md` is
-the *operator* of that loop; the workers are separate processes that never see
-its conversation. `devsup resume` continues every project unattended.
+Each cycle of `devsup run` does the same thing: take a job that's ready, write
+it a self-contained brief, start a fresh `claude -p` in its own git worktree,
+read the structured result it reports back, and move the job to its next
+state. Your Claude Code session is the operator that starts these cycles and
+relays gates to you; the workers are separate processes that never see your
+conversation. `devsup resume` picks up every project from where it left off,
+with no session at all.
 
-Three rules are enforced by the state machine, not convention: whoever did the
-work cannot approve it; a job that requires review cannot skip it; a job with
-a landable candidate cannot close without landing and verification.
+Three guarantees are built into the state machine, so no prompt can talk it
+out of them:
+
+- the agent that wrote a change can never be the one that approves it;
+- a job that requires review cannot skip review;
+- an approved change is not "done" until it has actually landed and been verified.
 
 <details>
 <summary>Agent roles</summary>
