@@ -9,17 +9,18 @@
 </head>
 <body>
 <header class="bar">
-  <div class="brand">DevSupervisor</div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span>DevSupervisor</div>
   <label class="project">
     <span class="k">Project</span>
-    <select id="project" aria-label="Project"></select>
+    <span class="select"><select id="project" aria-label="Project"></select></span>
   </label>
   <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
   <div class="facts">
-    <span class="fact" id="git" title="branch @ sha"></span>
+    <span class="fact git" id="git" title="branch @ sha"></span>
     <span class="fact" id="active"></span>
+    <span class="fact" id="gates"></span>
     <span class="fact" id="leases"></span>
-    <span class="fact" id="spend"></span>
+    <span class="fact spend" id="spend"></span>
   </div>
 </header>
 
@@ -56,9 +57,13 @@
 
 <aside class="detail" id="detail" hidden aria-live="polite">
   <div class="detail-head">
-    <span id="detail-title"></span>
+    <div class="detail-title">
+      <span class="detail-role" id="detail-role"></span>
+      <span id="detail-title"></span>
+    </div>
     <button type="button" id="detail-close" aria-label="Close">✕</button>
   </div>
+  <div class="detail-state" id="detail-state"></div>
   <dl id="detail-body"></dl>
 </aside>
 

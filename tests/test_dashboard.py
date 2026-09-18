@@ -941,6 +941,64 @@ class HttpTests(DashboardTestCase):
                              f"app.js must not build markup from durable text ({sink})")
 
 
+STATIC = Path(__file__).resolve().parents[1] / "devsupervisor" / "dashboard" / "static"
+
+
+class ConsoleStylingTests(DashboardTestCase):
+    """The stylesheet is a contract with the reader's vocabulary: every state the
+    reader can emit must have a visual, or a state would render as nothing."""
+
+    def setUp(self):
+        super().setUp()
+        self.css = (STATIC / "style.css").read_text()
+        self.js = (STATIC / "app.js").read_text()
+
+    def test_every_agent_status_has_a_node_style(self):
+        for status in (summary.AGENT_ACTIVE, summary.AGENT_WAITING, summary.AGENT_BLOCKED,
+                       summary.AGENT_COMPLETE, summary.AGENT_FAILED, summary.AGENT_IDLE,
+                       summary.AGENT_STALE):
+            self.assertIn(f'.node[data-status="{status}"]', self.css, status)
+
+    def test_every_coloured_global_status_has_a_pill_style(self):
+        """IDLE and NO ACTIVE RUN fall through to the dormant default on purpose."""
+        for status in ("RUNNING", "WAITING FOR HUMAN", "BLOCKED", "RECOVERING"):
+            self.assertIn(f'.status[data-state="{status}"]', self.css, status)
+
+    def test_every_activity_tone_has_a_row_style(self):
+        tones = {tone for _, tone, _ in reader_module.ACTIVITY_TRANSITIONS.values()}
+        tones |= {tone for _, tone, _ in reader_module.ACTIVITY_EVENTS.values()}
+        tones.discard("muted")  # the neutral row is the default style
+        for tone in tones:
+            self.assertIn(f'.activity li[data-tone="{tone}"]', self.css, tone)
+            self.assertIn(f"{tone}:", self.js.split("const MARKS")[1].split(";")[0], tone)
+
+    def test_a_human_decision_is_the_amber_state_everywhere(self):
+        """One colour for one meaning: the pill, the supervisor and the row."""
+        import re
+        for selector in (r'\.status\[data-state="WAITING FOR HUMAN"\]',
+                         r'\.node\.supervisor\.gate', r'\.activity li\[data-tone="gate"\]'):
+            # Every rule whose selector list ends with this selector; one of
+            # them must set the amber tone.
+            bodies = re.findall(selector + r"\s*\{([^}]*)\}", self.css)
+            self.assertTrue(bodies, selector)
+            self.assertTrue(any("--hold" in body for body in bodies), selector)
+        self.assertIn("HUMAN DECISION REQUIRED", self.js)
+
+    def test_reduced_motion_removes_every_animation(self):
+        block = self.css.split("@media (prefers-reduced-motion: reduce)")[1]
+        self.assertIn("animation: none !important", block)
+        self.assertIn(".wires line.pulse { display: none; }", block)
+
+    def test_the_page_references_only_published_files(self):
+        html = (STATIC / "index.html").read_text()
+        for name in ("/style.css", "/app.js"):
+            self.assertIn(name, html)
+        self.assertNotIn("http://", html)
+        self.assertNotIn("https://", html)
+        self.assertNotIn("@import", self.css)
+        self.assertNotIn("url(", self.css)
+
+
 def _key(entry):
     return (entry["at"], entry["title"], entry["detail"], entry["kind"])
 
