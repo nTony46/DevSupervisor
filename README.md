@@ -8,8 +8,8 @@ yours. State lives in SQLite, not in the conversation.
 ![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/agent-graph.png)
 
 *The dashboard's live agent graph. The supervisor owns the loop; each worker
-is a disposable agent on one job. Cyan is working, coral failed, gray idle;
-the dashed edge links a reviewer to the work it reviews.*
+is a disposable agent on one job. Cyan is working, green complete, coral
+failed; the dashed edge links a reviewer to the work it reviews.*
 
 ## Quick start
 
