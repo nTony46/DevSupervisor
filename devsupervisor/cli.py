@@ -65,21 +65,22 @@ def cmd_init(store, args):
     return EXIT_OK
 
 
-CLAUDE_MD_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "CLAUDE.md"
-CLAUDE_MD_MARKER = "# DevSupervisor"
+INSTRUCTIONS_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "instructions.md"
+INSTRUCTIONS_MARKER = "# DevSupervisor"
 
 
-def cmd_claude_md(store, args):
-    """Put the DevSupervisor instructions into a repository's CLAUDE.md, creating
-    the file or appending to one that exists. Running it twice changes nothing."""
-    repo = Path(args.repo).expanduser().resolve()
+def install_instructions(repo, filename):
+    """Put the DevSupervisor instructions into a repository's agent file
+    (CLAUDE.md, AGENTS.md), creating the file or appending to one that exists.
+    Running it twice changes nothing."""
+    repo = Path(repo).expanduser().resolve()
     if not repo.is_dir():
         raise DevSupervisorError(f"{repo} is not a directory")
-    target = repo / "CLAUDE.md"
-    block = CLAUDE_MD_TEMPLATE.read_text()
+    target = repo / filename
+    block = INSTRUCTIONS_TEMPLATE.read_text()
     if target.exists():
         existing = target.read_text()
-        if CLAUDE_MD_MARKER in existing:
+        if INSTRUCTIONS_MARKER in existing:
             print(f"{target} already has the DevSupervisor section; nothing changed")
             return EXIT_OK
         separator = "" if existing.endswith("\n\n") else "\n" if existing.endswith("\n") else "\n\n"
@@ -89,6 +90,14 @@ def cmd_claude_md(store, args):
         target.write_text(block)
         print(f"wrote {target}")
     return EXIT_OK
+
+
+def cmd_claude_md(store, args):
+    return install_instructions(args.repo, "CLAUDE.md")
+
+
+def cmd_agents_md(store, args):
+    return install_instructions(args.repo, "AGENTS.md")
 
 
 def cmd_goal_add(store, args):
@@ -466,6 +475,11 @@ def build_parser():
         "claude-md", help="add the DevSupervisor instructions to a repository's CLAUDE.md")
     claude_md.add_argument("repo", nargs="?", default=".")
     claude_md.set_defaults(func=cmd_claude_md)
+
+    agents_md = subs.add_parser(
+        "agents-md", help="add the DevSupervisor instructions to a repository's AGENTS.md (Codex and others)")
+    agents_md.add_argument("repo", nargs="?", default=".")
+    agents_md.set_defaults(func=cmd_agents_md)
 
     goal = subs.add_parser("goal", help="goals").add_subparsers(dest="goal_command",
                                                                 required=True)

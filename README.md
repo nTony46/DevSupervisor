@@ -16,23 +16,24 @@ devsup doctor
 
 devsup init ~/path/to/your-repo --name myproject
 devsup claude-md ~/path/to/your-repo            # creates CLAUDE.md, or appends to yours
+devsup agents-md ~/path/to/your-repo            # same for AGENTS.md (Codex and others)
 ```
 
-Now open Claude Code in your repo and give it a task as you normally would:
+Now open Claude Code (or Codex) in your repo and give it a task as you normally would:
 
 ```
 Add prose-search fallback for identifiers that miss the index. Budget $20.
 Stop and ask if the fix needs a threshold you would have to guess.
 ```
 
-The `CLAUDE.md` is what tells the session to use DevSupervisor — you don't
+That file is what tells the session to use DevSupervisor — you don't
 have to say so in each prompt, and without it nothing is automatic. The
 session registers the task as a goal, plans it, runs the loop within your
 budget, and brings every human decision back to you as a gate. What comes back
 is a landed SHA, what was verified, and what it cost.
 
 **Nothing spends money unless you name a budget.** The default provider is a
-free deterministic mock, and the `CLAUDE.md` forbids `--allow-paid` unless you
+free deterministic mock, and the instructions forbid `--allow-paid` unless you
 said the work may spend.
 
 <details>
@@ -150,7 +151,7 @@ devsupervisor/
 docs/          architecture and the frozen spec
 tests/         acceptance suite (stdlib unittest, no network)
 examples/      a sample project fixture
-templates/     the CLAUDE.md that `devsup claude-md` installs
+templates/     the instructions `devsup claude-md` / `agents-md` install
 ```
 </details>
 
@@ -159,7 +160,7 @@ templates/     the CLAUDE.md that `devsup claude-md` installs
 Everything durable lives under `$DEVSUPERVISOR_HOME` (default
 `~/.devsupervisor`); point it at a temp directory for an isolated instance.
 
-`./scripts/test.sh` — 414 tests, no network, no paid calls.
+`./scripts/test.sh` — 419 tests, no network, no paid calls.
 
 Local, single machine, one supervisor loop at a time. Providers: `mock` and
 `claude-cli` (needs `claude` on `PATH`). Runs from a checkout; no package yet.

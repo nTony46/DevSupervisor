@@ -109,31 +109,45 @@ class CommandTests(CliTestCase):
 
 
 class ClaudeMdTests(CliTestCase):
+    command = "claude-md"
+    filename = "CLAUDE.md"
+
     def test_writes_the_file_when_there_is_none(self):
         repo = self.make_repo()
-        self.assertIn("wrote", self.cli(["claude-md", str(repo)]))
-        text = (repo / "CLAUDE.md").read_text()
+        self.assertIn("wrote", self.cli([self.command, str(repo)]))
+        text = (repo / self.filename).read_text()
         self.assertTrue(text.startswith("# DevSupervisor"))
         self.assertIn("devsup gates", text)
 
     def test_appends_to_an_existing_file_and_keeps_what_was_there(self):
         repo = self.make_repo()
-        (repo / "CLAUDE.md").write_text("# My project\n\nRun `make test` before committing.\n")
-        self.assertIn("appended", self.cli(["claude-md", str(repo)]))
-        text = (repo / "CLAUDE.md").read_text()
+        (repo / self.filename).write_text("# My project\n\nRun `make test` before committing.\n")
+        self.assertIn("appended", self.cli([self.command, str(repo)]))
+        text = (repo / self.filename).read_text()
         self.assertTrue(text.startswith("# My project\n"))
         self.assertIn("Run `make test`", text)
         self.assertIn("\n\n# DevSupervisor", text)
 
     def test_running_it_twice_changes_nothing(self):
         repo = self.make_repo()
-        self.cli(["claude-md", str(repo)])
-        before = (repo / "CLAUDE.md").read_text()
-        self.assertIn("nothing changed", self.cli(["claude-md", str(repo)]))
-        self.assertEqual((repo / "CLAUDE.md").read_text(), before)
+        self.cli([self.command, str(repo)])
+        before = (repo / self.filename).read_text()
+        self.assertIn("nothing changed", self.cli([self.command, str(repo)]))
+        self.assertEqual((repo / self.filename).read_text(), before)
 
     def test_refuses_a_missing_directory(self):
-        self.cli(["claude-md", str(self.home / "nope")], expect=EXIT_ERROR)
+        self.cli([self.command, str(self.home / "nope")], expect=EXIT_ERROR)
+
+
+class AgentsMdTests(ClaudeMdTests):
+    command = "agents-md"
+    filename = "AGENTS.md"
+
+    def test_leaves_the_other_file_alone(self):
+        repo = self.make_repo()
+        self.cli(["claude-md", str(repo)])
+        self.cli(["agents-md", str(repo)])
+        self.assertEqual((repo / "CLAUDE.md").read_text(), (repo / "AGENTS.md").read_text())
 
 
 class FailureModeTests(CliTestCase):
