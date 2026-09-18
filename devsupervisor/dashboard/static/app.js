@@ -16,7 +16,7 @@ const PAGE = 50;
 
 const el = (id) => document.getElementById(id);
 const ui = {
-  project: el('project'), status: el('status'), git: el('git'), active: el('active'),
+  project: el('project'), projectList: el('project-list'), status: el('status'), git: el('git'), active: el('active'),
   gates: el('gates'), leases: el('leases'), spend: el('spend'), pipeline: el('pipeline'),
   current: el('current'), graph: el('graph'), wires: el('wires'),
   supervisor: el('tier-supervisor'), workers: el('tier-workers'), activity: el('activity'),
@@ -104,20 +104,57 @@ function renderHeader(state) {
   fact(ui.spend, typeof spend.project_usd === 'number' ? `$${spend.project_usd.toFixed(2)}` : '');
 }
 
+/* The project selector is a button and a listbox rather than a <select>: the
+ * native popup is drawn by the OS and cannot sit in the console's theme. It
+ * owes the full behaviour in return — arrows, Home/End, Enter, Escape,
+ * click-outside, and focus returned to the button. */
 function renderProjects(state) {
   const names = state.projects || [];
   const current = state.project ? state.project.id : '';
-  const signature = names.map((p) => p.id).join(',') + '|' + current;
+  const signature = names.map((p) => p.id + ':' + p.name).join(',') + '|' + current;
   if (ui.project.dataset.signature === signature) return;
   ui.project.dataset.signature = signature;
-  ui.project.replaceChildren();
+  const selected = names.find((p) => p.id === current);
+  setText(ui.project, selected ? selected.name : current || '—');
+  ui.projectList.replaceChildren();
   names.forEach((entry) => {
-    const option = node('option', null, entry.name);
-    option.value = entry.id;
-    if (entry.id === current) option.selected = true;
-    ui.project.appendChild(option);
+    const option = node('li', null, entry.name);
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', entry.id === current ? 'true' : 'false');
+    option.tabIndex = -1;
+    option.dataset.id = entry.id;
+    option.addEventListener('click', () => chooseProject(entry.id));
+    ui.projectList.appendChild(option);
   });
   ui.project.disabled = names.length < 2;
+  if (ui.project.disabled) closeMenu();
+}
+
+function openMenu() {
+  if (ui.project.disabled) return;
+  ui.projectList.hidden = false;
+  ui.project.setAttribute('aria-expanded', 'true');
+  const active = ui.projectList.querySelector('[aria-selected="true"]') || ui.projectList.firstElementChild;
+  if (active) active.focus();
+}
+
+function closeMenu(refocus) {
+  if (ui.projectList.hidden) return;
+  ui.projectList.hidden = true;
+  ui.project.setAttribute('aria-expanded', 'false');
+  if (refocus) ui.project.focus();
+}
+
+function chooseProject(id) {
+  closeMenu(true);
+  if (id === project) return;
+  project = id;
+  resetForProject();
+  const url = new URL(location.href);
+  url.searchParams.set('project', project);
+  history.replaceState(null, '', url);
+  tick();
+  tickActivity();
 }
 
 /* --- pipeline --- */
@@ -543,14 +580,30 @@ function resetForProject() {
   lastState = { agents: [] };
 }
 
-ui.project.addEventListener('change', () => {
-  project = ui.project.value;
-  resetForProject();
-  const url = new URL(location.href);
-  url.searchParams.set('project', project);
-  history.replaceState(null, '', url);
-  tick();
-  tickActivity();
+ui.project.addEventListener('click', () => (ui.projectList.hidden ? openMenu() : closeMenu()));
+ui.project.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); openMenu(); }
+});
+ui.projectList.addEventListener('keydown', (event) => {
+  const options = Array.from(ui.projectList.children);
+  const index = options.indexOf(document.activeElement);
+  const focus = (i) => options[Math.max(0, Math.min(options.length - 1, i))].focus();
+  switch (event.key) {
+    case 'ArrowDown': event.preventDefault(); focus(index + 1); break;
+    case 'ArrowUp': event.preventDefault(); focus(index - 1); break;
+    case 'Home': event.preventDefault(); focus(0); break;
+    case 'End': event.preventDefault(); focus(options.length - 1); break;
+    case 'Enter': case ' ':
+      event.preventDefault();
+      if (index >= 0) chooseProject(options[index].dataset.id);
+      break;
+    case 'Escape': event.preventDefault(); closeMenu(true); break;
+    case 'Tab': closeMenu(); break;
+    default: break;
+  }
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!ui.project.contains(event.target) && !ui.projectList.contains(event.target)) closeMenu();
 });
 
 ui.filters.addEventListener('click', (event) => {
@@ -566,7 +619,9 @@ ui.filters.addEventListener('click', (event) => {
 
 ui.more.addEventListener('click', () => loadActivity(false).catch((e) => showError(e.message)));
 el('detail-close').addEventListener('click', closeDetail);
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeDetail(); });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && ui.projectList.hidden) closeDetail();
+});
 window.addEventListener('resize', () => drawWires(lastState));
 
 tick();

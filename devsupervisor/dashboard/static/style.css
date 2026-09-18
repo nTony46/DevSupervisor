@@ -45,13 +45,10 @@ body {
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
   font-variant-numeric: tabular-nums;
-  /* a faint topology grid and one soft glow behind the graph; nothing moves */
+  /* one soft glow behind the graph; nothing moves */
   background:
     radial-gradient(900px 420px at 50% 380px, rgba(53, 214, 255, 0.035), transparent 70%),
-    linear-gradient(rgba(167, 176, 188, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(167, 176, 188, 0.03) 1px, transparent 1px),
     var(--void);
-  background-size: auto, 32px 32px, 32px 32px, auto;
   background-attachment: fixed;
 }
 h2 {
@@ -99,37 +96,75 @@ button:focus-visible, select:focus-visible {
   transform: rotate(45deg);
   box-shadow: 0 0 10px color-mix(in srgb, var(--signal) 40%, transparent);
 }
-.project { display: flex; align-items: center; gap: 8px; }
+.project { position: relative; display: flex; align-items: center; gap: 8px; }
 .project .k { color: var(--ink-4); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-.select { position: relative; display: inline-flex; }
+.select {
+  position: relative;
+  background: var(--void);
+  color: var(--ink);
+  border: 1px solid var(--seam-2);
+  border-radius: var(--radius-s);
+  padding: 5px 28px 5px 10px;
+  font-weight: 600;
+  min-height: 30px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms var(--ease-out), background-color 160ms var(--ease-out);
+}
 .select::after {
   content: "";
   position: absolute;
-  right: 10px;
+  right: 11px;
   top: 50%;
   width: 6px;
   height: 6px;
   border-right: 1.5px solid var(--ink-3);
   border-bottom: 1.5px solid var(--ink-3);
   transform: translateY(-70%) rotate(45deg);
-  pointer-events: none;
+  transition: transform 160ms var(--ease-out);
 }
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background: var(--void);
-  color: var(--ink);
-  border: 1px solid var(--seam-2);
+.select:hover:not(:disabled), .select[aria-expanded="true"] { border-color: var(--seam-3); background: var(--console); }
+.select[aria-expanded="true"]::after { transform: translateY(-30%) rotate(225deg); }
+.select:disabled { cursor: default; color: var(--ink-2); }
+.select:disabled::after { opacity: 0.5; }
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--deck);
+  border: 1px solid var(--seam-3);
+  border-radius: calc(var(--radius-s) + 4px);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 16px 40px rgba(0, 0, 0, 0.55);
+  z-index: 6;
+  transform-origin: top left;
+  animation: menu-in 160ms var(--ease-out) both;
+}
+.menu:focus { outline: none; }
+.menu li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
   border-radius: var(--radius-s);
-  padding: 5px 26px 5px 10px;
-  font: inherit;
-  font-weight: 600;
-  min-height: 30px;
+  color: var(--ink-2);
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 160ms var(--ease-out);
 }
-select:hover:not(:disabled) { border-color: var(--seam-3); }
-select:disabled { cursor: default; color: var(--ink-2); }
+.menu li::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  flex: none;
+}
+.menu li[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+.menu li[aria-selected="true"]::before { background: var(--signal); }
+.menu li:hover, .menu li:focus { background: var(--console-2); color: var(--ink); outline: none; }
 
 .status {
   display: inline-flex;
@@ -507,6 +542,10 @@ button.node:active { transform: translateY(0) scale(0.985); }
 @keyframes travel {
   from { stroke-dashoffset: 414; }
   to { stroke-dashoffset: 0; }
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
 }
 @keyframes panel-in {
   from { opacity: 0; transform: translateY(6px); }

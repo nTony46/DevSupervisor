@@ -10,10 +10,12 @@
 <body>
 <header class="bar">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span>DevSupervisor</div>
-  <label class="project">
-    <span class="k">Project</span>
-    <span class="select"><select id="project" aria-label="Project"></select></span>
-  </label>
+  <div class="project">
+    <span class="k" id="project-label">Project</span>
+    <button type="button" class="select" id="project" aria-haspopup="listbox"
+            aria-expanded="false" aria-controls="project-list" aria-labelledby="project-label project">…</button>
+    <ul class="menu" id="project-list" role="listbox" tabindex="-1" aria-labelledby="project-label" hidden></ul>
+  </div>
   <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
   <div class="facts">
     <span class="fact git" id="git" title="branch @ sha"></span>
