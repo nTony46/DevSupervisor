@@ -35,7 +35,8 @@ is a landed SHA, what was verified, and what it cost.
 free deterministic mock, and the `CLAUDE.md` forbids `--allow-paid` unless you
 said the work may spend.
 
-## The commands underneath
+<details>
+<summary>The commands underneath</summary>
 
 The session runs these for you; you can run them yourself at any time.
 
@@ -51,6 +52,7 @@ devsup status | jobs | job show <id>
 
 Also: `devsup pause|resume`, `devsup memory list|curate|adopt`,
 `devsup retrospect`, `devsup dashboard`.
+</details>
 
 ## Dashboard
 
