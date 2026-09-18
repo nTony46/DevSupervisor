@@ -8,6 +8,7 @@ import argparse
 import json
 import signal
 import sys
+from pathlib import Path
 
 from . import __version__, artifacts, config, dashboard, doctor, gates, gitfacts, metrics
 from . import retrospective
@@ -61,6 +62,32 @@ def cmd_init(store, args):
     if facts["is_git"]:
         print(f"  branch {facts['branch']} @ {(facts['head'] or '')[:12]}"
               f"{'' if facts['clean'] else '  (working tree dirty)'}")
+    return EXIT_OK
+
+
+CLAUDE_MD_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "CLAUDE.md"
+CLAUDE_MD_MARKER = "# DevSupervisor"
+
+
+def cmd_claude_md(store, args):
+    """Put the DevSupervisor instructions into a repository's CLAUDE.md, creating
+    the file or appending to one that exists. Running it twice changes nothing."""
+    repo = Path(args.repo).expanduser().resolve()
+    if not repo.is_dir():
+        raise DevSupervisorError(f"{repo} is not a directory")
+    target = repo / "CLAUDE.md"
+    block = CLAUDE_MD_TEMPLATE.read_text()
+    if target.exists():
+        existing = target.read_text()
+        if CLAUDE_MD_MARKER in existing:
+            print(f"{target} already has the DevSupervisor section; nothing changed")
+            return EXIT_OK
+        separator = "" if existing.endswith("\n\n") else "\n" if existing.endswith("\n") else "\n\n"
+        target.write_text(existing + separator + block)
+        print(f"appended the DevSupervisor section to {target}")
+    else:
+        target.write_text(block)
+        print(f"wrote {target}")
     return EXIT_OK
 
 
@@ -434,6 +461,11 @@ def build_parser():
     init.add_argument("--pack", help="project policy pack name")
     init.add_argument("--allow-non-git", action="store_true")
     init.set_defaults(func=cmd_init)
+
+    claude_md = subs.add_parser(
+        "claude-md", help="add the DevSupervisor instructions to a repository's CLAUDE.md")
+    claude_md.add_argument("repo", nargs="?", default=".")
+    claude_md.set_defaults(func=cmd_claude_md)
 
     goal = subs.add_parser("goal", help="goals").add_subparsers(dest="goal_command",
                                                                 required=True)

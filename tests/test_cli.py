@@ -108,6 +108,34 @@ class CommandTests(CliTestCase):
         self.assertIn("branch:feature/x", output)
 
 
+class ClaudeMdTests(CliTestCase):
+    def test_writes_the_file_when_there_is_none(self):
+        repo = self.make_repo()
+        self.assertIn("wrote", self.cli(["claude-md", str(repo)]))
+        text = (repo / "CLAUDE.md").read_text()
+        self.assertTrue(text.startswith("# DevSupervisor"))
+        self.assertIn("devsup gates", text)
+
+    def test_appends_to_an_existing_file_and_keeps_what_was_there(self):
+        repo = self.make_repo()
+        (repo / "CLAUDE.md").write_text("# My project\n\nRun `make test` before committing.\n")
+        self.assertIn("appended", self.cli(["claude-md", str(repo)]))
+        text = (repo / "CLAUDE.md").read_text()
+        self.assertTrue(text.startswith("# My project\n"))
+        self.assertIn("Run `make test`", text)
+        self.assertIn("\n\n# DevSupervisor", text)
+
+    def test_running_it_twice_changes_nothing(self):
+        repo = self.make_repo()
+        self.cli(["claude-md", str(repo)])
+        before = (repo / "CLAUDE.md").read_text()
+        self.assertIn("nothing changed", self.cli(["claude-md", str(repo)]))
+        self.assertEqual((repo / "CLAUDE.md").read_text(), before)
+
+    def test_refuses_a_missing_directory(self):
+        self.cli(["claude-md", str(self.home / "nope")], expect=EXIT_ERROR)
+
+
 class FailureModeTests(CliTestCase):
     def test_init_refuses_a_missing_path(self):
         self.cli(["init", str(self.home / "nope")], expect=EXIT_ERROR)
