@@ -4,8 +4,8 @@
  * and colour reserved for state. Cyan is "working"; amber is "needs a person"
  * (an open gate, or a pipeline stage that stopped and must be looked at);
  * green is "landed"; coral is "failed"; nothing else on the page is saturated.
- * Motion is a signal too — only live edges, live nodes, and an open gate move,
- * and nothing moves at all under prefers-reduced-motion.
+ * Motion is a signal too — only live nodes and an open gate move, and nothing
+ * moves at all under prefers-reduced-motion.
  */
 :root {
   /* surfaces, darkest to lightest: near-black charcoal, no hue of its own,
@@ -311,16 +311,6 @@ main {
 .wires line.fault { stroke: color-mix(in srgb, var(--fault) 45%, transparent); }
 .wires line.hot { stroke: var(--ink-2); stroke-width: 1.5; }
 .wires line.live.hot { stroke: var(--signal); stroke-width: 2; }
-/* a signal travelling down a live edge: the only continuous motion in the graph */
-.wires line.pulse {
-  stroke: var(--signal);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 14 400;
-  stroke-dashoffset: 414;
-  animation: travel 2.4s linear infinite;
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--signal) 80%, transparent));
-}
 .wires .rel { stroke: color-mix(in srgb, var(--revise) 45%, transparent); stroke-dasharray: 3 4; fill: none; }
 .tier { position: relative; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
 .tier-workers { margin-top: 72px; }
@@ -539,10 +529,6 @@ button.node:active { transform: translateY(0) scale(0.985); }
   70% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--tone) 0%, transparent); }
   100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone) 0%, transparent); }
 }
-@keyframes travel {
-  from { stroke-dashoffset: 414; }
-  to { stroke-dashoffset: 0; }
-}
 @keyframes menu-in {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: none; }
@@ -727,7 +713,6 @@ button.node:active { transform: translateY(0) scale(0.985); }
 /* --- motion off --------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; }
-  .wires line.pulse { display: none; }
   .node, .panel, .detail, .activity li { transition: none; }
 }
 

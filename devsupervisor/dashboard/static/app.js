@@ -340,7 +340,7 @@ function drawWires(state) {
     seen.add(key);
     let wire = wireNodes.get(key);
     if (!wire) {
-      wire = { line: document.createElementNS(SVG, 'line'), pulse: null };
+      wire = { line: document.createElementNS(SVG, 'line') };
       wireNodes.set(key, wire);
     }
     const coords = { x1: origin.x, y1: origin.y, x2: point.x, y2: point.y };
@@ -349,17 +349,6 @@ function drawWires(state) {
     wire.line.setAttribute('class', [WIRE_CLASS[status] || '', key === hotKey ? 'hot' : '']
       .filter(Boolean).join(' '));
     elements.push(wire.line);
-    // A signal travelling supervisor → worker, only while the worker is live.
-    if (status === 'ACTIVE') {
-      if (!wire.pulse) {
-        wire.pulse = document.createElementNS(SVG, 'line');
-        wire.pulse.setAttribute('class', 'pulse');
-      }
-      setAttrs(wire.pulse, coords);
-      elements.push(wire.pulse);
-    } else {
-      wire.pulse = null;
-    }
   });
   // Real delegation edges only: a reviewer to the work it reviews, a revision
   // to the attempt it replaces. Nothing decorative.

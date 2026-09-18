@@ -987,7 +987,6 @@ class ConsoleStylingTests(DashboardTestCase):
     def test_reduced_motion_removes_every_animation(self):
         block = self.css.split("@media (prefers-reduced-motion: reduce)")[1]
         self.assertIn("animation: none !important", block)
-        self.assertIn(".wires line.pulse { display: none; }", block)
 
     def test_the_page_references_only_published_files(self):
         html = (STATIC / "index.html").read_text()

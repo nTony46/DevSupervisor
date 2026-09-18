@@ -5,7 +5,7 @@ hands each piece to a disposable agent, has an independent reviewer check the
 result, lands what passes, and stops for you when a decision is genuinely
 yours. State lives in SQLite, not in the conversation.
 
-![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/live-agent-graph.png)
+![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/dashboard-graph.png)
 
 ## Quick start
 
