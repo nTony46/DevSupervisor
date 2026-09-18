@@ -12,92 +12,83 @@ human decision is needed.
 lives in small path-addressed documents, and work moves between agents as
 artifacts. The model reasons; deterministic code decides.
 
-## Quick start
+## Quick start — with Claude Code
 
 Python 3 standard library only. No install step, no dependencies.
 
 ```bash
 git clone git@github.com:nTony46/DevSupervisor.git
-cd DevSupervisor
-export PATH="$PWD/bin:$PATH"
+export PATH="$PWD/DevSupervisor/bin:$PATH"     # put this in your shell profile
+devsup doctor                                  # checks python, git, and `claude`
 
-devsup doctor                                   # check the runtime
-devsup init ~/path/to/repo --name myproject     # register a git repo
-devsup goal add myproject "Build feature X"
-devsup plan <goal-id>
-devsup run <goal-id> --dry-run
+devsup init ~/path/to/your-repo --name myproject
+cp DevSupervisor/templates/CLAUDE.md ~/path/to/your-repo/CLAUDE.md   # or append to an existing one
+```
+
+Then open Claude Code in your repo and give it a task the way you normally
+would. The `CLAUDE.md` tells the session that work here goes through
+DevSupervisor: it registers your task as a goal, plans it, runs the loop with
+the budget you name, and brings every human decision back to you as a gate.
+
+**Do you have to say "use DevSupervisor" in each prompt?** Not with the
+`CLAUDE.md` in place — that file is the instruction, loaded at the start of
+every session. Without it, Claude Code has no way to know the tool exists and
+will simply do the work itself. (After a few sessions Claude Code's own memory
+for a directory tends to pick the habit up anyway, but the file makes it
+deterministic from the first prompt.)
+
+**Nothing costs money by default.** The default provider is a deterministic
+mock, and `CLAUDE.md` tells the session never to add `--allow-paid` unless you
+say the work may spend. A real run looks like:
+
+```
+Add prose-search fallback for identifiers that miss the index. Budget $20.
+Stop and ask if the fix needs a threshold you would have to guess.
+```
+
+A good task says four things: the goal, the constraints, what "done" means,
+and when to stop and ask. What comes back is a landed SHA, what was verified,
+and what it cost — from durable state, not from the chat.
+
+### What the session runs for you
+
+```bash
+devsup goal add myproject "…" --criteria "…"     # the task, as a row
+devsup plan <goal-id>                              # goal → job graph
+devsup run myproject --dry-run                     # what would dispatch
+devsup run myproject --provider claude-cli --allow-paid --budget 20
+devsup gates                                       # decisions waiting on you
+devsup approve <gate-id> --actor you               # only ever after you answer
 devsup status
 ```
 
-**Nothing costs money by default.** The default provider is a deterministic
-mock. To use a real model you must say so: `--provider claude-cli --allow-paid
---budget <dollars>`.
+You can run any of these yourself, too. Other commands you'll reach for:
+`devsup jobs`, `devsup job show <id>`, `devsup reject <gate-id>`,
+`devsup pause|resume`, `devsup memory list|curate|adopt`, `devsup retrospect`.
 
-Other commands you'll reach for: `devsup jobs`, `devsup job show <id>`,
-`devsup gates`, `devsup approve|reject <gate-id>`, `devsup pause|resume`,
-`devsup memory list|curate|adopt`, `devsup retrospect`.
+### Project rules: policy packs
 
-**Project rules live in a policy pack**, not in the core: protected paths, a
-required verification command, extra hard rules, risk floors, and the subjects
-that must open a human gate. `devsupervisor/policy/packs/example.py` is a
-complete worked example. Copy it to `~/.devsupervisor/packs/<project>.py`,
-rename it, edit the rules, and pass `--pack <name>` to `devsup init`. Packs in
-that directory load by name exactly like the shipped one, and never need to be
-committed to this repository.
+Rules for a specific repository — protected paths, a required verification
+command, extra hard rules, risk floors, and the subjects that must open a
+human gate — live in a policy pack, not in the core.
+`devsupervisor/policy/packs/example.py` is a complete worked example. Copy it
+to `~/.devsupervisor/packs/<project>.py`, rename it, edit the rules, and pass
+`--pack <name>` to `devsup init`. Packs in that directory load by name exactly
+like the shipped one and never need to be committed to this repository.
 
-## Working with Claude
+## How the loop runs
 
-There are two ways to put a real model behind the supervisor. Both use the
-same durable state, so you can mix them and the dashboard shows either.
-
-### 1. Headless: the supervisor drives Claude Code
-
-```bash
-devsup run <goal-id> --provider claude-cli --allow-paid --budget 20
-```
-
-The supervisor compiles a job packet for each ready job, runs `claude -p` on
-it in a disposable worktree, parses the structured result block the worker is
+`devsup run` compiles a job packet for each ready job, runs `claude -p` on it
+in a disposable worktree, parses the structured result block the worker is
 told to end with, and moves the job through the state machine. The budget is a
 hard cap that survives restarts; a missing result block is a failed run, not a
-guess. This is the fully autonomous mode and it is the one the test suite
-exercises (with the mock provider standing in for `claude`).
+guess. A Claude Code session with the `CLAUDE.md` above is the *operator* of
+this loop — it adds goals, plans, runs, and relays gates — while the workers
+are separate `claude -p` processes that never see the operator's conversation.
 
-### 2. Interactive: a Claude Code session acts as the supervisor
-
-This is how the project's own author uses it day to day. Open Claude Code in
-the project and paste a structured brief. Claude keeps the durable state in
-DevSupervisor, spawns disposable subagents for the roles below, and reports
-back when the work has landed or a decision is needed.
-
-A brief that works well says four things: the goal, the constraints, what
-"done" means, and when to stop and ask. For example:
-
-```
-# myproject — identifier-miss fallback
-
-Goal: when a task description names an identifier that does not exist in the
-index, the retrieval packet must fall back to prose search instead of coming
-back empty.
-
-Constraints: do not change the ranking of hits that already work. No force
-push, no history rewrite. Land on main only after an independent review.
-
-Done means: a regression test that fails on main today and passes after; the
-existing suite green; the change measured on the 75-case set with the numbers
-in the commit message.
-
-Stop and open a gate if: the fix needs a threshold, and you would have to
-guess the value. When done, STOP and report the final SHA.
-```
-
-The session then runs the outer loop by hand: register the goal (`devsup goal
-add`), plan it, hand the build to a worker agent in its own clone, hand the
-result to a *different* reviewer agent that never saw the builder's reasoning,
-loop on REJECT with numbered blockers, land the exact approved SHA, and run
-`devsup approve|reject` decisions past you as gates rather than deciding them
-itself. Prompts are pasted; conversation history is not the record — `devsup
-status`, `devsup jobs`, and the dashboard are.
+The same loop runs unattended without a Claude Code session in front of it:
+`devsup resume` continues every project from durable state, and the test suite
+drives it end to end with the mock provider standing in for `claude`.
 
 ### The agents
 
@@ -186,6 +177,7 @@ devsupervisor/
 docs/          architecture and the frozen spec
 tests/         acceptance suite (stdlib unittest, no network)
 examples/      a sample project fixture
+templates/     the CLAUDE.md to drop into a supervised repository
 ```
 </details>
 
