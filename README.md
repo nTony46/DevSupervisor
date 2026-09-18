@@ -5,11 +5,7 @@ hands each piece to a disposable agent, has an independent reviewer check the
 result, lands what passes, and stops for you when a decision is genuinely
 yours. State lives in SQLite, not in the conversation.
 
-![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/agent-graph.png)
-
-*The dashboard's live agent graph. The supervisor owns the loop; each worker
-is a disposable agent on one job. Cyan is working, green complete, coral
-failed; the dashed edge links a reviewer to the work it reviews.*
+![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/live-agent-graph.png)
 
 ## Quick start
 
