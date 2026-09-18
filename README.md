@@ -227,3 +227,7 @@ runtime root.
 [safety and human gates](docs/security-and-human-gates.md) ·
 [acceptance tests](docs/acceptance-tests.md) ·
 [handoff reconciliation](docs/handoff-reconciliation.md)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
