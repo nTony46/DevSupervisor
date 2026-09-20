@@ -38,7 +38,10 @@ ACTIVE_WITHOUT_LEASE_SECONDS = 3600
 # forever and the graph would show a dead agent with a running clock -- the
 # defect this grace period exists to avoid, reintroduced from the other side.
 MAX_DECLARED_GRACE_SECONDS = 86400
-MAX_AGENT_NODES = 12
+# A safety bound, not a page size: every live job and every role a project has
+# ever dispatched is drawn, and only a runaway (hundreds of live jobs) is cut.
+# A mature project uses fifteen-odd roles, so this is far above real use.
+MAX_AGENT_NODES = 48
 # The graph is a glance, not a reading surface; the full question is in `devsup gates`.
 SUPERVISOR_LINE_CHARS = 120
 GIT_CACHE_SECONDS = 5

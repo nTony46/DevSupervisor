@@ -318,18 +318,20 @@ class NodeCapTests(DashboardTestCase):
         self.project = self.make_project()
         self.roles = ("build", "reviewer", "researcher", "planner", "security", "qa",
                       "evaluator", "landing")
+        # Enough live jobs to spill past the cap, however high the cap is set.
+        self.per_role = reader_module.MAX_AGENT_NODES // len(self.roles) + 1
         for role in self.roles:
-            for index in range(3):
+            for index in range(self.per_role):
                 self.running_job(self.project, role=role, subject=f"{role} {index}")
         self.state = self.reader().state(self.project["id"])
 
     def test_the_active_count_is_the_real_one_not_the_displayed_one(self):
-        self.assertEqual(self.state["active_count"], len(self.roles) * 3)
+        self.assertEqual(self.state["active_count"], len(self.roles) * self.per_role)
         self.assertLessEqual(len(self.state["agents"]), reader_module.MAX_AGENT_NODES)
 
     def test_hidden_agents_are_declared_rather_than_dropped_silently(self):
         self.assertEqual(self.state["hidden_agents"],
-                         len(self.roles) * 3 - reader_module.MAX_AGENT_NODES)
+                         len(self.roles) * self.per_role - reader_module.MAX_AGENT_NODES)
 
     def test_no_role_with_running_work_is_offered_as_idle_capacity(self):
         busy = {job["role"] for job in
@@ -340,7 +342,7 @@ class NodeCapTests(DashboardTestCase):
                                  f"{agent['role']} has running jobs but is shown idle")
 
     def test_idle_capacity_the_cap_dropped_is_declared_too(self):
-        """Eleven live jobs leave one slot; the roles that miss out are counted."""
+        """Live jobs one short of the cap leave one slot; the roles that miss out are counted."""
         project = self.make_project("crowded")
         for index in range(reader_module.MAX_AGENT_NODES - 1):
             self.running_job(project, role="build", subject=f"shard {index}")
@@ -363,9 +365,7 @@ class NodeCapTests(DashboardTestCase):
         a node dropped without ever being counted as hidden.
         """
         project = self.make_project("mature")
-        roles = ("build", "reviewer", "qa", "security", "planner", "landing",
-                 "evaluator", "researcher", "investigator", "architect",
-                 "specialist", "benchmark", "freeze", "operator")
+        roles = tuple(f"role{index:02d}" for index in range(reader_module.MAX_AGENT_NODES + 3))
         for role in roles:
             job = self.make_job(project=project, role=role, subject=f"{role} history")
             self.store.conn.execute(
