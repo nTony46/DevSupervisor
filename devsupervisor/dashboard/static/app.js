@@ -25,6 +25,9 @@ const ui = {
   workingCount: el('working-count'), attentionCount: el('attention-count'),
   workflowTitle: el('workflow-title'), workflowId: el('workflow-id'), crumbProject: el('crumb-project'),
   workflowDescription: el('workflow-description'), sidebarWorkflowTitle: el('sidebar-workflow-title'),
+  crumbSection: el('crumb-section'), agentLibraryPage: el('agent-library-page'),
+  librarySearch: el('library-search'), agentProfileGrid: el('agent-profile-grid'),
+  libraryProfileCount: el('library-profile-count'),
   workflowCount: el('workflow-count'), agentCount: el('agent-count'), laneCount: el('lane-count'),
   toolbarWorking: el('toolbar-working'), toolbarAttention: el('toolbar-attention'),
   toolbarWorktrees: el('toolbar-worktrees'), providerFilter: el('provider-filter'),
@@ -45,6 +48,7 @@ let lastState = { agents: [] };
 let selectedJob = null;
 let hotKey = null;
 let providerFilter = 'all';
+let libraryQuery = '';
 
 /* --- tiny DOM helpers: every value lands as text, never as markup --- */
 function node(tag, className, text) {
@@ -490,6 +494,15 @@ const ROLE_COPY = {
   freeze: 'Records an approved artifact as authoritative.',
   operator: 'Performs bounded operational verification.',
 };
+const ROLE_NAMES = {
+  supervisor: 'Workflow coordinator', build: 'Builder', qa: 'QA engineer',
+  security: 'Security reviewer', landing: 'Landing agent', freeze: 'Freeze agent',
+};
+
+function roleName(role) {
+  if (ROLE_NAMES[role]) return ROLE_NAMES[role];
+  return String(role || 'Agent').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
+}
 
 function libraryCard(profile) {
   const card = node('article', 'library-card');
@@ -511,6 +524,62 @@ function libraryCard(profile) {
   if (profile.source) facts.appendChild(node('span', null, profile.source));
   card.appendChild(facts);
   return card;
+}
+
+function profileCard(profile) {
+  const card = node('button', 'agent-profile-card');
+  card.type = 'button';
+  card.dataset.provider = profile.provider || 'policy';
+  card.setAttribute('aria-label', `Inspect ${roleName(profile.role)} configuration`);
+  card.addEventListener('click', () => showProfile(profile));
+  const top = node('span', 'profile-top');
+  top.appendChild(node('span', 'agent-glyph', profile.provider === 'codex' ? '›_' : '✳'));
+  top.appendChild(node('span', 'profile-badge', profile.instances ? `${profile.instances} live` : 'Preset'));
+  card.appendChild(top);
+  card.appendChild(node('strong', 'profile-name', roleName(profile.role)));
+  card.appendChild(node('span', 'profile-copy', ROLE_COPY[profile.role] || 'Reusable workflow role.'));
+  const footer = node('span', 'profile-footer');
+  const settings = [profile.provider || 'Policy provider', profile.model,
+    profile.effort ? `${profile.effort} thinking` : ''].filter(Boolean).join(' · ');
+  footer.appendChild(node('span', null, settings));
+  footer.appendChild(node('span', 'profile-action', 'Inspect configuration ↗'));
+  card.appendChild(footer);
+  return card;
+}
+
+function renderAgentLibrary(state) {
+  const profiles = state.agent_library || [];
+  const query = libraryQuery.trim().toLowerCase();
+  const shown = profiles.filter((profile) => [profile.role, profile.provider, profile.model,
+    profile.effort, profile.access, ROLE_COPY[profile.role]].filter(Boolean).join(' ').toLowerCase().includes(query));
+  setText(ui.libraryProfileCount, profiles.length);
+  if (!shown.length) {
+    ui.agentProfileGrid.replaceChildren(node('p', 'empty', 'No agent profiles match this search'));
+    return;
+  }
+  ui.agentProfileGrid.replaceChildren(...shown.map(profileCard));
+}
+
+function showProfile(profile) {
+  setText(ui.libraryKicker, 'Reusable profile');
+  setText(ui.libraryTitle, `${roleName(profile.role)} configuration`);
+  setText(ui.libraryCopy, ROLE_COPY[profile.role] || 'Reusable workflow role.');
+  const details = node('dl', 'profile-details');
+  const fields = [
+    ['Provider', profile.provider || 'Resolved by routing policy'],
+    ['Model', profile.model || 'Resolved by routing policy'],
+    ['Thinking', profile.effort || 'Default'],
+    ['Access', profile.access],
+    ['Live instances', profile.instances],
+    ['Source', profile.source],
+  ];
+  fields.forEach(([label, value]) => {
+    details.appendChild(node('dt', null, label));
+    details.appendChild(node('dd', null, value));
+  });
+  ui.libraryList.replaceChildren(details);
+  if (typeof ui.library.showModal === 'function') ui.library.showModal();
+  else ui.library.setAttribute('open', '');
 }
 
 function showLibrary(kind) {
@@ -829,6 +898,7 @@ async function tick() {
     lastState = state;
     renderProjects(state);
     renderHeader(state);
+    renderAgentLibrary(state);
     renderPipeline(state);
     renderProviderFilter(state);
     renderGraph(state);
@@ -904,11 +974,14 @@ ui.providerFilter.addEventListener('change', () => {
   renderGraph(lastState);
   renderLanes(lastState);
 });
-el('agent-library-open').addEventListener('click', () => showLibrary('profiles'));
 el('assignments-open').addEventListener('click', () => showLibrary('assignments'));
 el('library-close').addEventListener('click', closeLibrary);
 el('library-done').addEventListener('click', closeLibrary);
 el('current-workflow-link').addEventListener('click', () => selectView('graph'));
+ui.librarySearch.addEventListener('input', () => {
+  libraryQuery = ui.librarySearch.value;
+  renderAgentLibrary(lastState);
+});
 el('detail-close').addEventListener('click', closeDetail);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && ui.projectList.hidden) {
@@ -921,14 +994,15 @@ window.addEventListener('resize', () => drawWires(lastState));
 function selectView(view) {
   const main = document.querySelector('.app-main');
   main.dataset.view = view;
+  setText(ui.crumbSection, view === 'library' ? 'Agent library' : view === 'activity' ? 'Run history' : 'Workflow');
   document.querySelectorAll('.view-tab').forEach((button) => {
     const selected = button.dataset.view === view;
     button.classList.toggle('on', selected);
     button.setAttribute('aria-selected', selected ? 'true' : 'false');
   });
   document.querySelectorAll('.nav-item').forEach((button) => {
-    const selected = button.dataset.section !== 'agents'
-      && button.dataset.section === (view === 'activity' ? 'activity' : 'workflow');
+    const selected = button.dataset.section === (view === 'library' ? 'agents'
+      : view === 'activity' ? 'activity' : 'workflow');
     button.classList.toggle('on', selected);
     if (selected) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
@@ -940,8 +1014,8 @@ document.querySelectorAll('.view-tab').forEach((button) => {
   button.addEventListener('click', () => selectView(button.dataset.view));
 });
 document.querySelectorAll('.nav-item').forEach((button) => {
-  if (button.dataset.section === 'agents') return;
-  button.addEventListener('click', () => selectView(button.dataset.section === 'activity' ? 'activity' : 'graph'));
+  button.addEventListener('click', () => selectView(button.dataset.section === 'agents'
+    ? 'library' : button.dataset.section === 'activity' ? 'activity' : 'graph'));
 });
 
 tick();

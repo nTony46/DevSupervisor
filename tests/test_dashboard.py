@@ -1020,8 +1020,11 @@ class ConsoleStylingTests(DashboardTestCase):
         html = (STATIC / "index.html").read_text()
         for label in ("Agent library", "Agent assignments", "By lane"):
             self.assertIn(label, html)
-        for renderer in ("renderLanes(", "showLibrary(", "renderProviderFilter("):
+        self.assertIn('id="agent-library-page"', html)
+        for renderer in ("renderLanes(", "renderAgentLibrary(", "showLibrary(",
+                         "renderProviderFilter("):
             self.assertIn(renderer, self.js)
+        self.assertIn('.app-main[data-view="library"] .agent-library-page', self.css)
 
     def test_every_agent_status_has_a_node_style(self):
         for status in (summary.AGENT_ACTIVE, summary.AGENT_WAITING, summary.AGENT_BLOCKED,

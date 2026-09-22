@@ -991,6 +991,101 @@ button { color: inherit; }
 .dialog-foot { display: flex; align-items: center; gap: 20px; padding: 14px 22px; border-top: 1px solid var(--seam); color: var(--ink-4); font-size: 10px; }
 .dialog-foot button { margin-left: auto; padding: 6px 12px; border: 1px solid var(--seam-2); border-radius: 6px; background: transparent; color: var(--ink-2); cursor: pointer; }
 
+/* The library follows the original workflow concept: a quiet, full-page
+   catalogue with large profiles instead of another dashboard popover. */
+.agent-library-page { display: none; min-width: 0; padding: 6px 0 20px; }
+.library-page-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 28px;
+  padding: 0 0 42px;
+}
+.library-page-head h1 {
+  margin: 0; color: var(--ink); font-size: 30px; line-height: 1.2;
+  font-weight: 650; letter-spacing: -.035em;
+}
+.library-page-head > div > p:last-child {
+  max-width: 620px; margin: 9px 0 0; color: var(--ink-3); font-size: 13px;
+}
+.policy-badge {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 11px;
+  border: 1px solid rgba(72,216,255,.3); border-radius: 6px;
+  background: rgba(72,216,255,.07); color: var(--signal); font: 10px/1 var(--mono);
+  letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+}
+.policy-badge::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--signal);
+  box-shadow: 0 0 8px rgba(72,216,255,.5);
+}
+.library-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  margin-bottom: 24px;
+}
+.library-toolbar > span { color: var(--ink-4); font-size: 11px; white-space: nowrap; }
+.library-toolbar > span b { color: var(--ink-2); font-weight: 600; }
+.library-search {
+  display: flex; align-items: center; gap: 10px; width: min(360px,100%); min-height: 40px;
+  padding: 0 13px; border: 1px solid var(--seam-2); border-radius: 6px;
+  background: var(--deck); color: var(--ink-4);
+  transition: border-color 150ms var(--ease-out), background-color 150ms var(--ease-out);
+}
+.library-search:focus-within { border-color: rgba(72,216,255,.65); background: var(--console); }
+.library-search input {
+  min-width: 0; width: 100%; border: 0; outline: 0; background: transparent;
+  color: var(--ink); font: 12px var(--font);
+}
+.library-search input::placeholder { color: var(--ink-4); }
+.agent-profile-grid {
+  display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px;
+}
+.agent-profile-grid > .empty { grid-column: 1 / -1; margin: 0; padding: 48px 20px; border: 1px dashed var(--seam-2); border-radius: 9px; color: var(--ink-3); text-align: center; }
+.agent-profile-card {
+  display: flex; flex-direction: column; min-width: 0; min-height: 226px; padding: 21px 22px 18px;
+  border: 1px solid var(--seam-2); border-radius: 9px; background: var(--console);
+  color: var(--ink); text-align: left; cursor: pointer;
+  box-shadow: 0 1px 0 rgba(255,255,255,.025) inset, 0 12px 30px rgba(0,0,0,.18);
+  transition: transform 150ms var(--ease-out), border-color 150ms var(--ease-out), background-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+}
+.agent-profile-card:hover {
+  transform: translateY(-2px); border-color: var(--seam-3); background: #192028;
+  box-shadow: 0 1px 0 rgba(255,255,255,.035) inset, 0 17px 38px rgba(0,0,0,.28);
+}
+.agent-profile-card:focus-visible { outline: 2px solid rgba(72,216,255,.7); outline-offset: 2px; }
+.profile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.profile-top .agent-glyph { width: 34px; height: 34px; background: #28313a; font-size: 12px; }
+.agent-profile-card[data-provider="claude"] .profile-top .agent-glyph { background: #382a24; color: #e7ad88; }
+.profile-badge {
+  padding: 4px 7px; border-radius: 4px; background: var(--console-2); color: var(--ink-3);
+  font: 9px/1.35 var(--mono); text-transform: uppercase;
+}
+.profile-name { margin-top: 23px; color: var(--ink); font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+.profile-copy { margin-top: 8px; color: var(--ink-3); font-size: 12px; line-height: 1.6; }
+.profile-footer {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  margin-top: auto; padding-top: 16px; border-top: 1px solid var(--seam);
+  color: var(--ink-3); font-size: 10px;
+}
+.profile-footer > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-action { flex: none; color: var(--ink-2); }
+.agent-profile-card:hover .profile-action { color: var(--signal); }
+.profile-details {
+  display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 0;
+  margin: 0; padding: 16px 22px 22px;
+}
+.profile-details dt,.profile-details dd { margin: 0; padding: 11px 0; border-bottom: 1px solid var(--seam); }
+.profile-details dt { color: var(--ink-4); font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.profile-details dd { color: var(--ink-2); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.profile-details dt:nth-last-of-type(1),.profile-details dd:last-child { border-bottom: 0; }
+
+.app-main[data-view="library"] .agent-library-page { display: block; }
+.app-main:not([data-view="library"]) .agent-library-page { display: none; }
+.app-main[data-view="library"] .workflow-head,
+.app-main[data-view="library"] .view-tabs,
+.app-main[data-view="library"] .run-toolbar,
+.app-main[data-view="library"] #pipeline-section,
+.app-main[data-view="library"] #graph-section,
+.app-main[data-view="library"] #lane-section,
+.app-main[data-view="library"] #release-gate,
+.app-main[data-view="library"] #activity-section { display: none; }
+
 .app-main[data-view="graph"] #lane-section,.app-main[data-view="graph"] #activity-section { display: none; }
 .app-main[data-view="lanes"] #graph-section,.app-main[data-view="lanes"] #activity-section { display: none; }
 .app-main[data-view="activity"] #graph-section,.app-main[data-view="activity"] #lane-section,
@@ -999,6 +1094,7 @@ button { color: inherit; }
 @media (max-width: 1050px) {
   .lane-row { grid-template-columns: minmax(170px,1.2fr) minmax(150px,1fr) minmax(150px,1fr) 110px 14px; gap: 12px; }
   .library-list { grid-template-columns: 1fr; }
+  .agent-profile-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 700px) {
   .nav-group { display: none; }.nav-count { display: none; }
@@ -1009,4 +1105,8 @@ button { color: inherit; }
   .lane-branch,.lane-runtime { grid-column: 1; }.lane-status { grid-column: 2; grid-row: 1; }.lane-arrow { grid-column: 2; grid-row: 2 / 4; align-self: center; }
   .release-gate { align-items: flex-start; flex-wrap: wrap; }.gate-progress { width: 100%; margin-left: 32px; }
   .library-dialog { max-height: calc(100vh - 24px); }.library-list { max-height: calc(100vh - 280px); padding: 14px 16px 18px; }.dialog-head,.dialog-copy,.dialog-foot { padding-left: 16px; padding-right: 16px; }
+  .library-page-head { display: block; padding-bottom: 28px; }.library-page-head h1 { font-size: 26px; }.policy-badge { margin-top: 18px; }
+  .library-toolbar { display: grid; gap: 12px; }.library-toolbar > span { white-space: normal; }.library-search { width: 100%; }
+  .agent-profile-grid { grid-template-columns: minmax(0,1fr); gap: 12px; }.agent-profile-card { min-height: 205px; padding: 19px; }
+  .profile-details { grid-template-columns: 95px minmax(0,1fr); padding-left: 16px; padding-right: 16px; }
 }

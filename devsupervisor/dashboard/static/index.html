@@ -45,7 +45,7 @@
 
   <div class="app-main" data-view="graph">
     <header class="bar">
-      <div class="crumbs"><span>Workspace</span><i>/</i><span id="crumb-project">Project</span><i>/</i><b>Workflow</b></div>
+      <div class="crumbs"><span>Workspace</span><i>/</i><span id="crumb-project">Project</span><i>/</i><b id="crumb-section">Workflow</b></div>
       <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
     </header>
 
@@ -75,6 +75,17 @@
     </div>
 
     <main>
+      <section class="agent-library-page" id="agent-library-page">
+        <div class="library-page-head">
+          <div><p class="eyebrow">YOUR TEAM, YOUR DEFAULTS</p><h1>Agent library</h1><p>Reusable roles for every workflow. Inspect how each agent thinks and works.</p></div>
+          <span class="policy-badge">Policy managed</span>
+        </div>
+        <div class="library-toolbar">
+          <label class="library-search"><span aria-hidden="true">⌕</span><input type="search" id="library-search" placeholder="Find an agent…" aria-label="Search agent profiles"></label>
+          <span><b id="library-profile-count">0</b> profiles · Effective settings for future assignments</span>
+        </div>
+        <div class="agent-profile-grid" id="agent-profile-grid"></div>
+      </section>
       <section class="run-toolbar" aria-label="Assignment summary">
         <div class="run-facts"><span><b id="toolbar-working">0</b> working</span><span><b id="toolbar-attention">0</b> need attention</span><span><b id="toolbar-worktrees">0</b> isolated worktrees</span></div>
         <label class="provider-filter">Provider
