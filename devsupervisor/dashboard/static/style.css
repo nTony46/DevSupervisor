@@ -306,7 +306,7 @@ main {
 /* Each edge is a gradient: the supervisor's colour for its first quarter, the
    worker's colour for the rest. The stops carry the colour; the class carries
    how strongly the edge shows. */
-.wires line { stroke: var(--wire); stroke-width: 1; transition: stroke-width 200ms var(--ease-out); }
+.wires path { stroke: var(--wire); stroke-width: 1; fill: none; transition: stroke-width 200ms var(--ease-out); }
 .wires stop { stop-opacity: 0.22; transition: stop-color 300ms var(--ease-out), stop-opacity 200ms var(--ease-out); }
 .wires .live stop { stop-opacity: 0.65; }
 .wires .gate stop { stop-opacity: 0.65; }
@@ -314,11 +314,11 @@ main {
 .wires .done stop { stop-opacity: 0.45; }
 .wires .fault stop { stop-opacity: 0.5; }
 .wires .hot stop { stop-opacity: 1; }
-.wires line.live { stroke-width: 1.5; }
-.wires line.gate { stroke-dasharray: 4 4; }
-.wires line.stale { stroke-dasharray: 2 5; }
-.wires line.hot { stroke-width: 1.5; }
-.wires line.live.hot { stroke-width: 2; }
+.wires path.live { stroke-width: 1.5; }
+.wires path.gate { stroke-dasharray: 4 4; }
+.wires path.stale { stroke-dasharray: 2 5; }
+.wires path.hot { stroke-width: 1.5; }
+.wires path.live.hot { stroke-width: 2; }
 .wires .rel { stroke: color-mix(in srgb, var(--revise) 45%, transparent); stroke-dasharray: 3 4; fill: none; }
 .tier { position: relative; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
 .tier-workers { margin-top: 72px; }
@@ -727,4 +727,161 @@ button.node:active { transform: translateY(0) scale(0.985); }
 @media (max-width: 900px) {
   .facts { width: 100%; margin-left: 0; flex-wrap: wrap; row-gap: 4px; }
   .detail { top: 100px; left: 12px; right: 12px; width: auto; max-height: calc(100vh - 120px); }
+}
+
+/* --- workflow console --------------------------------------------------
+ * The durable execution path is the product's signature: coordinator,
+ * assignments, review handoffs, and evidence. Stronger contrast restores the
+ * legibility of the original dashboard while the hierarchy follows the new
+ * workflow-first design.
+ */
+:root {
+  --void: #080a0d;
+  --deck: #0e1115;
+  --console: #151a20;
+  --console-2: #1d242c;
+  --seam: rgba(210, 220, 232, 0.13);
+  --seam-2: rgba(210, 220, 232, 0.24);
+  --seam-3: rgba(220, 230, 242, 0.42);
+  --wire: rgba(115, 199, 224, 0.28);
+  --ink: #f7f9fb;
+  --ink-2: #d4dbe4;
+  --ink-3: #a8b3c0;
+  --ink-4: #7d8998;
+  --signal: #48d8ff;
+  --hold: #ffc45c;
+  --landed: #63df95;
+  --fault: #ff7080;
+  --revise: #b99aff;
+  --font: "Avenir Next", Avenir, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+body { font: 14px/1.55 var(--font); background: var(--void); }
+button { color: inherit; }
+.app-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; z-index: 7;
+  display: flex; flex-direction: column; padding: 22px 14px 16px;
+  border-right: 1px solid var(--seam); background: var(--void);
+}
+.sidebar .brand { padding: 0 8px; font-size: 17px; letter-spacing: -0.02em; }
+.sidebar .brand-mark { width: 20px; height: 20px; border-width: 1.5px; border-radius: 5px; }
+.sidebar .project {
+  display: flex; align-items: center; gap: 10px; margin: 28px 0 20px; padding: 10px;
+  border: 1px solid var(--seam-2); border-radius: 8px; background: var(--deck);
+}
+.project-avatar {
+  width: 28px; height: 28px; display: grid; place-items: center; flex: none;
+  border-radius: 6px; background: #263631; color: #c3e6d2; font-weight: 700;
+}
+.project-copy { min-width: 0; flex: 1; }
+.sidebar .project .k { display: block; font-size: 10px; color: var(--ink-4); }
+.sidebar .select {
+  min-height: auto; max-width: 130px; padding: 1px 18px 1px 0; border: 0;
+  background: transparent; font-size: 12px; font-weight: 600; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar .select::after { right: 3px; }
+.sidebar .select:hover:not(:disabled), .sidebar .select[aria-expanded="true"] { background: transparent; }
+.sidebar .menu { top: calc(100% + 6px); left: 0; right: 0; min-width: 188px; }
+.nav { display: grid; gap: 4px; }
+.nav-item {
+  min-height: 40px; display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px;
+  border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); text-align: left;
+  cursor: pointer; transition: color 150ms var(--ease-out), background-color 150ms var(--ease-out);
+}
+.nav-item:hover { color: var(--ink); background: var(--deck); }
+.nav-item.on { color: var(--ink); background: var(--console-2); }
+.nav-icon { width: 18px; color: var(--ink-3); font-family: var(--mono); text-align: center; }
+.sidebar-spacer { flex: 1; }
+.read-only-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--seam); border-radius: 8px; color: var(--ink-3); }
+.read-only-note .dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 10px rgba(72,216,255,.45); }
+.read-only-note strong { display: block; font-size: 12px; color: var(--ink-2); }
+.read-only-note small { display: block; margin-top: 2px; font-size: 10px; color: var(--ink-4); }
+.app-main { min-width: 0; }
+.app-main .bar {
+  min-height: 54px; padding: 0 32px; flex-wrap: nowrap; justify-content: space-between;
+  background: color-mix(in srgb, var(--void) 94%, transparent); border-bottom-color: var(--seam);
+}
+.crumbs { display: flex; align-items: center; gap: 11px; color: var(--ink-4); font-size: 12px; }
+.crumbs i { color: #46505c; font-style: normal; }.crumbs b { color: var(--ink-2); font-weight: 600; }
+.app-main .status { font-size: 10px; padding: 4px 9px; }
+.workflow-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 30px 32px 24px; }
+.eyebrow { margin: 0 0 8px; color: var(--ink-4); font: 10px/1.4 var(--mono); letter-spacing: .13em; }
+.eyebrow span { margin-left: 8px; color: var(--ink-3); letter-spacing: .04em; }
+.workflow-head h1 { margin: 0; color: var(--ink); font-size: 29px; line-height: 1.2; letter-spacing: -.035em; font-weight: 650; }
+.workflow-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0; margin-top: 12px; color: var(--ink-3); }
+.workflow-meta .fact { font-size: 12px; }.workflow-meta .fact:first-child { padding-left: 0; }
+.workflow-meta .git { font-family: var(--mono); }
+.mode-badge { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; flex: none; padding: 6px 10px; border: 1px solid var(--seam-2); border-radius: 6px; color: var(--ink-2); font-size: 11px; }
+.mode-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 9px rgba(72,216,255,.5); }
+.view-tabs { display: flex; gap: 24px; height: 48px; padding: 0 32px; border-bottom: 1px solid var(--seam); }
+.view-tab { position: relative; padding: 0; border: 0; background: transparent; color: var(--ink-4); cursor: pointer; font-size: 12px; }
+.view-tab:hover { color: var(--ink-2); }.view-tab.on { color: var(--ink); }
+.view-tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--signal); }
+.app-main main { display: grid; gap: 16px; max-width: none; margin: 0; padding: 22px 32px 40px; }
+.app-main .panel { padding: 18px 20px 20px; background: var(--deck); border-color: var(--seam-2); box-shadow: 0 1px 0 rgba(255,255,255,.025) inset, 0 10px 34px rgba(0,0,0,.24); }
+.panel-heading,.graph-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.panel-heading h2,.graph-heading h2,.activity-head h2 { margin-bottom: 0; color: var(--ink-2); font: 650 10px/1.4 var(--mono); letter-spacing: .14em; }
+.panel-heading .current { margin: 0; max-width: 70%; color: var(--ink-2); font-size: 12px; text-align: right; }
+.pipeline { margin-top: 14px; }.stage .name { color: var(--ink-3); background: var(--console); }
+.stage[data-state="active"] .name { color: var(--signal); background: rgba(72,216,255,.12); box-shadow: 0 0 18px rgba(72,216,255,.14); }
+.graph-heading { margin-bottom: 4px; }.graph-heading p,.activity-head p { margin: 5px 0 0; color: var(--ink-3); font-size: 12px; }
+.graph-summary { display: flex; gap: 18px; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.graph-summary b { color: var(--ink); }.graph-summary span:last-child b { color: var(--hold); }
+.graph { min-height: 360px; padding: 20px 0 26px; }
+.tier-workers { display: grid; grid-template-columns: repeat(auto-fit, minmax(205px, 1fr)); align-items: stretch; margin-top: 72px; gap: 14px; }
+.tier-workers .node { width: auto; min-width: 0; }
+.node { padding: 15px 16px; border-color: var(--seam-2); border-radius: 8px; background: var(--console); font-family: var(--font); }
+.node-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.node .role { color: var(--ink-2); font: 650 10px/1.3 var(--mono); letter-spacing: .13em; }
+.node .instance { color: var(--signal); font: 10px/1.3 var(--mono); }
+.node .state { font-size: 11px; text-transform: none; }
+.node .line { min-height: 42px; margin-top: 13px; color: var(--ink); font-size: 15px; line-height: 1.45; font-weight: 600; -webkit-line-clamp: 2; line-clamp: 2; }
+.node .runtime { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; color: var(--ink-3); font-size: 11px; }
+.node .runtime .effort { color: var(--ink-4); font-size: 10px; }
+.node .branch { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--seam); color: var(--ink-3); font: 10px/1.5 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .handoff { display: flex; gap: 9px; align-items: center; margin: 15px -16px -15px; padding: 11px 15px; border-top: 1px solid var(--seam); border-radius: 0 0 8px 8px; background: #101419; color: var(--ink-3); }
+.node .handoff-icon { color: var(--ink-4); }.node .handoff b { display: block; color: var(--ink-2); font-size: 11px; font-weight: 600; }.node .handoff small { display: block; margin-top: 1px; color: var(--ink-4); font-size: 10px; }
+.node[data-status="ACTIVE"] { background: #15232a; border-color: rgba(72,216,255,.65); box-shadow: 0 0 22px rgba(72,216,255,.12); }
+.node[data-status="ACTIVE"] .line { color: #fff; }
+.node[data-status="STALE"] { background: #1d1a15; border-color: rgba(255,196,92,.55); }
+.node.supervisor { width: 360px; padding: 17px 20px; background: #182129; }
+.node.supervisor .role { color: var(--signal); font-size: 10px; }.node.supervisor .line { min-height: auto; font-size: 17px; }
+.node.supervisor .note { color: var(--ink-2); font-size: 12px; }
+.attention { margin-top: 4px; padding: 16px; border: 1px solid rgba(255,196,92,.26); border-radius: 8px; background: rgba(255,196,92,.055); }
+.attention h3 { margin: 0 0 12px; color: var(--hold); font: 650 10px/1.4 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+.attention-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 12px; }
+.attention-list .node { width: auto; }.attention-list .node .handoff { display: none; }
+.capacity { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--seam); }
+.capacity summary { display: flex; align-items: center; gap: 9px; min-height: 32px; color: var(--ink-3); font-size: 12px; cursor: pointer; }
+.capacity summary span { margin-left: auto; color: var(--ink-4); font: 10px var(--mono); }
+.capacity-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.capacity-role { padding: 6px 10px; border: 1px solid var(--seam); border-radius: 5px; background: var(--console); color: var(--ink-3); font: 10px var(--mono); text-transform: uppercase; }
+.activity-head { align-items: flex-start; margin-bottom: 12px; }.activity-head h2 { margin: 0; }
+.filters { border-radius: 6px; background: var(--console); }.filters button { border-radius: 4px; color: var(--ink-3); }.filters button.on { background: var(--console-2); color: var(--ink); }
+.activity li { grid-template-columns: 54px 24px 1fr; padding: 11px 12px; }.activity .at { color: var(--ink-3); font: 11px var(--mono); }.activity .title { color: var(--ink); font-size: 13px; }.activity .sub { color: var(--ink-2); }.activity .note { color: var(--ink-3); }
+.detail { top: 0; right: 0; width: 390px; max-height: 100vh; height: 100vh; padding: 20px 22px; border-width: 0 0 0 1px; border-radius: 0; background: var(--console); box-shadow: -20px 0 70px rgba(0,0,0,.56); }
+.detail-title > span:last-child { font-size: 15px; }.detail dl { grid-template-columns: 105px 1fr; gap: 10px 14px; }.detail dt { font-size: 11px; }.detail dd { color: var(--ink-2); }
+.app-main[data-view="activity"] #pipeline-section,.app-main[data-view="activity"] #graph-section { display: none; }
+.app-main[data-view="graph"] #activity-section { display: none; }
+
+@media (max-width: 1050px) {
+  .app-shell { grid-template-columns: 188px minmax(0,1fr); }
+  .app-main .bar,.workflow-head,.view-tabs { padding-left: 24px; padding-right: 24px; }
+  .app-main main { padding-left: 24px; padding-right: 24px; }
+  .tier-workers { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 700px) {
+  .app-shell { display: block; }.sidebar { position: static; height: auto; padding: 12px 16px; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--seam); }
+  .sidebar .brand { font-size: 14px; padding: 0; }.sidebar .brand-mark { width: 17px; height: 17px; }.sidebar .project,.sidebar-spacer,.read-only-note { display: none; }
+  .nav { display: flex; margin-left: auto; }.nav-item { width: 40px; padding: 10px; overflow: hidden; font-size: 0; }.nav-icon { font-size: 14px; }
+  .app-main .bar { min-height: 44px; padding: 0 18px; }.crumbs { font-size: 10px; gap: 6px; }.app-main .status { display: none; }
+  .workflow-head { padding: 22px 18px 18px; }.workflow-head h1 { font-size: 25px; }.mode-badge { display: none; }.workflow-meta .fact { padding: 0 8px; font-size: 10px; }
+  .view-tabs { height: 44px; padding: 0 18px; }.app-main main { padding: 18px; }.app-main .panel { padding: 16px; }
+  .panel-heading,.graph-heading { display: block; }.panel-heading .current { max-width: none; margin-top: 8px; text-align: left; }.graph-summary { margin-top: 12px; }
+  .pipeline { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }.stage .name { padding: 5px 10px; }.stage .arrow { width: 18px; }
+  .wires { display: none; }.graph { min-height: 0; padding-bottom: 8px; }.node.supervisor { width: 100%; }.tier-workers { grid-template-columns: 1fr; margin-top: 20px; }
+  .node .line { min-height: auto; }.attention-list { grid-template-columns: 1fr; }.activity-head { display: block; }.filters { margin: 14px 0 0; overflow-x: auto; }.activity li { grid-template-columns: 42px 20px 1fr; gap: 8px; padding-left: 4px; padding-right: 4px; }
+  .detail { width: 100%; }.graph-heading p { max-width: 320px; }
 }

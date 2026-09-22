@@ -8,67 +8,108 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header class="bar">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"></span>DevSupervisor</div>
-  <div class="project">
-    <span class="k" id="project-label">Project</span>
-    <button type="button" class="select" id="project" aria-haspopup="listbox"
-            aria-expanded="false" aria-controls="project-list" aria-labelledby="project-label project">…</button>
-    <ul class="menu" id="project-list" role="listbox" tabindex="-1" aria-labelledby="project-label" hidden></ul>
-  </div>
-  <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
-  <div class="facts">
-    <span class="fact git" id="git" title="branch @ sha"></span>
-    <span class="fact" id="active"></span>
-    <span class="fact" id="gates"></span>
-    <span class="fact" id="leases"></span>
-    <span class="fact spend" id="spend"></span>
-  </div>
-</header>
-
-<main>
-  <section class="panel pipeline-panel">
-    <h2>Current Pipeline</h2>
-    <div class="pipeline" id="pipeline"></div>
-    <p class="current" id="current"></p>
-  </section>
-
-  <section class="panel graph-panel">
-    <h2>Live Agent Graph</h2>
-    <div class="graph" id="graph">
-      <svg class="wires" id="wires" aria-hidden="true"></svg>
-      <div class="tier tier-top" id="tier-supervisor"></div>
-      <div class="tier tier-workers" id="tier-workers"></div>
-    </div>
-  </section>
-
-  <section class="panel activity-panel">
-    <div class="activity-head">
-      <h2>Recent Activity</h2>
-      <div class="filters" id="filters" role="group" aria-label="Filter activity">
-        <button type="button" data-kind="all" class="on">All</button>
-        <button type="button" data-kind="completed">Completed</button>
-        <button type="button" data-kind="failed">Failed</button>
-        <button type="button" data-kind="gate">Gates</button>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Dashboard navigation">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>DevSupervisor</div>
+    <div class="project">
+      <span class="project-avatar" aria-hidden="true">D</span>
+      <div class="project-copy">
+        <span class="k" id="project-label">Project</span>
+        <button type="button" class="select" id="project" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="project-list"
+                aria-labelledby="project-label project">…</button>
       </div>
+      <ul class="menu" id="project-list" role="listbox" tabindex="-1"
+          aria-labelledby="project-label" hidden></ul>
     </div>
-    <ol class="activity" id="activity"></ol>
-    <button type="button" class="more" id="more" hidden>Load more</button>
-  </section>
-</main>
+    <nav class="nav">
+      <button type="button" class="nav-item on" data-section="workflow" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">◇</span>Workflow
+      </button>
+      <button type="button" class="nav-item" data-section="activity">
+        <span class="nav-icon" aria-hidden="true">↻</span>Run history
+      </button>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="read-only-note"><span class="dot"></span><div><strong>Live observer</strong><small>Read-only durable state</small></div></div>
+  </aside>
+
+  <div class="app-main" data-view="graph">
+    <header class="bar">
+      <div class="crumbs"><span>Workspace</span><i>/</i><span id="crumb-project">Project</span><i>/</i><b>Workflow</b></div>
+      <div class="status" id="status"><span class="dot"></span><span class="label">…</span></div>
+    </header>
+
+    <section class="workflow-head">
+      <div>
+        <p class="eyebrow">CURRENT WORKFLOW <span id="workflow-id"></span></p>
+        <h1 id="workflow-title">Loading workflow…</h1>
+        <div class="workflow-meta">
+          <span class="fact git" id="git" title="branch @ sha"></span>
+          <span class="fact" id="active"></span>
+          <span class="fact" id="gates"></span>
+          <span class="fact" id="leases"></span>
+          <span class="fact spend" id="spend"></span>
+        </div>
+      </div>
+      <span class="mode-badge"><span class="dot"></span>Live state</span>
+    </section>
+
+    <div class="view-tabs" role="tablist" aria-label="Workflow views">
+      <button type="button" class="view-tab on" data-view="graph" role="tab" aria-selected="true">Agent graph</button>
+      <button type="button" class="view-tab" data-view="activity" role="tab" aria-selected="false">Activity</button>
+    </div>
+
+    <main>
+      <section class="panel pipeline-panel" id="pipeline-section">
+        <div class="panel-heading"><h2>Execution path</h2><p class="current" id="current"></p></div>
+        <div class="pipeline" id="pipeline"></div>
+      </section>
+
+      <section class="panel graph-panel" id="graph-section">
+        <div class="graph-heading">
+          <div><h2>Live assignments</h2><p>One workflow coordinator, distinct agent instances, and explicit review handoffs.</p></div>
+          <div class="graph-summary"><span><b id="working-count">0</b> working</span><span><b id="attention-count">0</b> need attention</span></div>
+        </div>
+        <div class="graph" id="graph">
+          <svg class="wires" id="wires" aria-hidden="true"></svg>
+          <div class="tier tier-top" id="tier-supervisor"></div>
+          <div class="tier tier-workers" id="tier-workers"></div>
+        </div>
+        <section class="attention" id="attention-section" hidden>
+          <h3>Needs attention</h3><div class="attention-list" id="attention-list"></div>
+        </section>
+        <details class="capacity" id="capacity" hidden>
+          <summary>Available agent roles <span id="capacity-count"></span></summary>
+          <div class="capacity-list" id="capacity-list"></div>
+        </details>
+      </section>
+
+      <section class="panel activity-panel" id="activity-section">
+        <div class="activity-head">
+          <div><h2>Run history</h2><p>Every handoff and state change, in context.</p></div>
+          <div class="filters" id="filters" role="group" aria-label="Filter activity">
+            <button type="button" data-kind="all" class="on">All</button>
+            <button type="button" data-kind="completed">Completed</button>
+            <button type="button" data-kind="failed">Failed</button>
+            <button type="button" data-kind="gate">Gates</button>
+          </div>
+        </div>
+        <ol class="activity" id="activity"></ol>
+        <button type="button" class="more" id="more" hidden>Load more</button>
+      </section>
+    </main>
+  </div>
+</div>
 
 <aside class="detail" id="detail" hidden aria-live="polite">
   <div class="detail-head">
-    <div class="detail-title">
-      <span class="detail-role" id="detail-role"></span>
-      <span id="detail-title"></span>
-    </div>
+    <div class="detail-title"><span class="detail-role" id="detail-role"></span><span id="detail-title"></span></div>
     <button type="button" id="detail-close" aria-label="Close">✕</button>
   </div>
   <div class="detail-state" id="detail-state"></div>
   <dl id="detail-body"></dl>
 </aside>
-
 <p class="err" id="err" hidden></p>
 <script src="/app.js"></script>
 </body>

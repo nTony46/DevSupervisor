@@ -20,6 +20,10 @@ const ui = {
   gates: el('gates'), leases: el('leases'), spend: el('spend'), pipeline: el('pipeline'),
   current: el('current'), graph: el('graph'), wires: el('wires'),
   supervisor: el('tier-supervisor'), workers: el('tier-workers'), activity: el('activity'),
+  attention: el('attention-list'), attentionSection: el('attention-section'),
+  capacity: el('capacity'), capacityList: el('capacity-list'), capacityCount: el('capacity-count'),
+  workingCount: el('working-count'), attentionCount: el('attention-count'),
+  workflowTitle: el('workflow-title'), workflowId: el('workflow-id'), crumbProject: el('crumb-project'),
   more: el('more'), filters: el('filters'), detail: el('detail'),
   detailRole: el('detail-role'), detailTitle: el('detail-title'),
   detailState: el('detail-state'), detailBody: el('detail-body'), err: el('err'),
@@ -102,6 +106,10 @@ function renderHeader(state) {
   fact(ui.leases, state.leases || 0, state.leases === 1 ? 'lease' : 'leases');
   const spend = state.spend || {};
   fact(ui.spend, typeof spend.project_usd === 'number' ? `$${spend.project_usd.toFixed(2)}` : '');
+  const goal = state.goal || {};
+  setText(ui.workflowTitle, goal.title || (state.project && state.project.name) || 'No active workflow');
+  setText(ui.workflowId, goal.id || '');
+  setText(ui.crumbProject, state.project ? state.project.name : 'Project');
 }
 
 /* The project selector is a button and a listbox rather than a <select>: the
@@ -212,7 +220,7 @@ function supervisorNode(state) {
   const gated = state.status === 'WAITING FOR HUMAN';
   if (!supervisorBox) {
     supervisorBox = node('div', 'node supervisor');
-    supervisorBox.appendChild(node('div', 'role', 'SUPERVISOR'));
+    supervisorBox.appendChild(node('div', 'role', 'WORKFLOW COORDINATOR'));
     const line = node('div', 'state');
     line.appendChild(node('span', 'dot'));
     line.appendChild(node('span', 'label'));
@@ -250,7 +258,25 @@ function supervisorNode(state) {
 const workerNodes = new Map();
 const agentKey = (agent) => agent.id || `role:${agent.role}`;
 
-function workerNode(agent) {
+// Operators write roles by hand, so "BUILDER" and "build" are the same role.
+const BUILDER_ROLES = new Set(['build', 'builder']);
+const isBuilder = (agent) => BUILDER_ROLES.has(String(agent.role || '').toLowerCase());
+// Statuses past review: the handoff footer states what the ledger says, never
+// a guess about a reviewer that has not been dispatched.
+const REVIEWED = new Set(['APPROVED', 'LANDING_READY', 'LANDING', 'VERIFIED', 'EVALUATED', 'DONE']);
+const AWAITING_REVIEW = new Set(['WORK_COMPLETE', 'UNDER_REVIEW']);
+
+function handoffFor(agent, reviewers) {
+  if (!agent.id || !isBuilder(agent) || agent.review_policy === 'none') return '';
+  const reviewer = reviewers.get(agent.id);
+  if (reviewer) return `Reviewer ${(AGENT_MARKS[reviewer.status] || reviewer.status).toLowerCase()}`;
+  if (REVIEWED.has(agent.job_status)) return 'Approved';
+  if (agent.job_status === 'REJECTED') return 'Rejected';
+  if (AWAITING_REVIEW.has(agent.job_status)) return 'Awaiting a reviewer';
+  return 'Required before landing';
+}
+
+function workerNode(agent, builderNumber, handoffLine) {
   const key = agentKey(agent);
   let box = workerNodes.get(key);
   if (!box) {
@@ -265,23 +291,50 @@ function workerNode(agent) {
     box.addEventListener('mouseleave', () => setHot(null));
     box.addEventListener('focus', () => setHot(key));
     box.addEventListener('blur', () => setHot(null));
-    box.appendChild(node('div', 'role'));
+    const head = node('div', 'node-head');
+    head.appendChild(node('div', 'role'));
+    head.appendChild(node('span', 'instance'));
+    box.appendChild(head);
     const state = node('div', 'state');
     state.appendChild(node('span', 'dot'));
     state.appendChild(node('span', 'label'));
     state.appendChild(node('span', 't'));
     box.appendChild(state);
     box.appendChild(node('div', 'line'));
+    const runtime = node('div', 'runtime');
+    runtime.appendChild(node('span', 'provider'));
+    runtime.appendChild(node('span', 'effort'));
+    box.appendChild(runtime);
+    box.appendChild(node('div', 'branch'));
+    const handoff = node('div', 'handoff');
+    handoff.appendChild(node('span', 'handoff-icon', '◇'));
+    const handoffText = node('span');
+    handoffText.appendChild(node('b', null, 'Independent review'));
+    handoffText.appendChild(node('small'));
+    handoff.appendChild(handoffText);
+    box.appendChild(handoff);
     workerNodes.set(key, box);
   }
   setData(box, 'status', agent.status);
-  setText(box.querySelector('.role'), agent.role || 'agent');
+  const displayRole = isBuilder(agent) ? 'builder' : String(agent.role || 'agent').toLowerCase();
+  setText(box.querySelector('.role'), displayRole);
+  setText(box.querySelector('.instance'), builderNumber ? `B-${String(builderNumber).padStart(2, '0')}` : '');
   setText(box.querySelector('.state .label'), AGENT_MARKS[agent.status] || agent.status);
   const time = elapsed(agent.elapsed_s);
   setText(box.querySelector('.state .t'), time ? `· ${time}` : '');
   const line = box.querySelector('.line');
-  setText(line, agent.line || '');
+  setText(line, agent.title || agent.line || '');
   if (line.title !== (agent.line || '')) line.title = agent.line || '';
+  const runtime = box.querySelector('.runtime');
+  setText(runtime.querySelector('.provider'), agent.provider || agent.model || '');
+  setText(runtime.querySelector('.effort'), agent.effort ? `${agent.effort} thinking` : '');
+  runtime.hidden = !(agent.provider || agent.model || agent.effort);
+  const branch = box.querySelector('.branch');
+  setText(branch, agent.branch || '');
+  branch.hidden = !agent.branch;
+  const handoff = box.querySelector('.handoff');
+  setText(handoff.querySelector('small'), handoffLine || '');
+  handoff.hidden = !handoffLine;
   box.classList.toggle('selected', !!agent.id && agent.id === selectedJob);
   if (agent.id) box.setAttribute('aria-pressed', agent.id === selectedJob ? 'true' : 'false');
   return box;
@@ -293,19 +346,41 @@ let emptyBox = null;
 function renderGraph(state) {
   reconcile(ui.supervisor, [supervisorNode(state)]);
   const agents = state.agents || [];
-  const elements = agents.map(workerNode);
-  const keys = new Set(agents.map(agentKey));
+  const active = agents.filter((agent) => !['IDLE', 'STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
+  const attention = agents.filter((agent) => ['STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
+  const idle = agents.filter((agent) => agent.status === 'IDLE');
+  // Builders are numbered by job id so a card keeps its number while the
+  // graph reorders around it.
+  const builderNumbers = new Map();
+  agents.filter((agent) => agent.id && isBuilder(agent))
+    .map((agent) => agent.id).sort()
+    .forEach((id, index) => builderNumbers.set(id, index + 1));
+  const reviewers = new Map();
+  agents.forEach((agent) => { if (agent.id && agent.reviews) reviewers.set(agent.reviews, agent); });
+  const card = (agent) => workerNode(agent, builderNumbers.get(agent.id), handoffFor(agent, reviewers));
+  const elements = active.map(card);
+  const attentionElements = attention.map(card);
+  const keys = new Set(active.concat(attention).map(agentKey));
   workerNodes.forEach((_, key) => { if (!keys.has(key)) workerNodes.delete(key); });
-  if (!agents.length) {
+  if (!active.length && !attention.length) {
     if (!emptyBox) emptyBox = node('div', 'empty', 'No agents registered for this project');
     elements.push(emptyBox);
   }
-  if (state.hidden_agents) {
-    if (!moreBox) moreBox = node('div', 'node more-agents');
-    setText(moreBox, `+${state.hidden_agents} more not shown`);
-    elements.push(moreBox);
-  }
   reconcile(ui.workers, elements);
+  reconcile(ui.attention, attentionElements);
+  ui.attentionSection.hidden = !attentionElements.length;
+  setText(ui.workingCount, active.filter((agent) => agent.status === 'ACTIVE').length);
+  setText(ui.attentionCount, attention.length);
+
+  const capacity = idle.map((agent) => node('span', 'capacity-role', agent.role));
+  if (state.hidden_agents) {
+    if (!moreBox) moreBox = node('span', 'capacity-role more-agents');
+    setText(moreBox, `+${state.hidden_agents} more`);
+    capacity.push(moreBox);
+  }
+  reconcile(ui.capacityList, capacity);
+  ui.capacity.hidden = !capacity.length;
+  setText(ui.capacityCount, capacity.length ? `${idle.length} idle${state.hidden_agents ? ` · ${state.hidden_agents} hidden` : ''}` : '');
   requestAnimationFrame(() => drawWires(state));
 }
 
@@ -364,7 +439,13 @@ function drawWires(state) {
   const elements = [wireDefs];
   const gradients = [];
   const seen = new Set();
-  ui.workers.querySelectorAll('.node').forEach((worker) => {
+  const workers = Array.from(ui.workers.querySelectorAll('.node'));
+  // Every wire bends in the gap under the coordinator and arrives vertically,
+  // so one bound for a node in a later row drops behind the row above it
+  // instead of slicing diagonally across its neighbours.
+  const firstRowTop = Math.min(...workers.map((worker) => worker.getBoundingClientRect().top - box.top));
+  const bend = (origin.y + firstRowTop) / 2;
+  workers.forEach((worker) => {
     const rect = worker.getBoundingClientRect();
     const point = { x: rect.left - box.left + rect.width / 2, y: rect.top - box.top };
     const key = worker.dataset.key || 'more';
@@ -372,12 +453,16 @@ function drawWires(state) {
     seen.add(key);
     let wire = wireNodes.get(key);
     if (!wire) {
-      wire = { line: document.createElementNS(SVG, 'line'), gradient: gradientFor(key) };
+      wire = { line: document.createElementNS(SVG, 'path'), gradient: gradientFor(key) };
       wire.line.style.stroke = `url(#${wire.gradient.id})`;
       wireNodes.set(key, wire);
     }
     const coords = { x1: origin.x, y1: origin.y, x2: point.x, y2: point.y };
-    setAttrs(wire.line, coords);
+    // The curve lands on the first row; a node in a later row gets a straight
+    // drop from there, which only shows in the gap between rows.
+    const d = `M ${origin.x} ${origin.y} C ${origin.x} ${bend}, ${point.x} ${bend}, ${point.x} ${firstRowTop}`
+      + (point.y - firstRowTop > 1 ? ` V ${point.y}` : '');
+    if (wire.line.getAttribute('d') !== d) wire.line.setAttribute('d', d);
     const status = worker.dataset.status;
     const classes = [WIRE_CLASS[status] || '', key === hotKey ? 'hot' : ''].filter(Boolean).join(' ');
     wire.line.setAttribute('class', classes);
@@ -400,6 +485,18 @@ function drawWires(state) {
     const ay = a.rect.top - box.top;
     const by = b.rect.top - box.top;
     const rise = Math.min(ay, by) - 30;
+    let d;
+    if (Math.abs(ay - by) > 12) {
+      // Different rows: the arc above the upper row would cut through it, so
+      // run through the gap between the rows instead.
+      const [lower, upper] = ay > by ? [a, b] : [b, a];
+      const y1 = lower.rect.top - box.top;
+      const y2 = upper.rect.bottom - box.top;
+      const mid = (y1 + y2) / 2;
+      d = `M ${lower.point.x} ${y1} C ${lower.point.x} ${mid}, ${upper.point.x} ${mid}, ${upper.point.x} ${y2}`;
+    } else {
+      d = `M ${a.point.x} ${ay} C ${a.point.x} ${rise}, ${b.point.x} ${rise}, ${b.point.x} ${by}`;
+    }
     const relKey = `rel:${agent.id}`;
     seen.add(relKey);
     let wire = wireNodes.get(relKey);
@@ -408,7 +505,6 @@ function drawWires(state) {
       wire.path.setAttribute('class', 'rel');
       wireNodes.set(relKey, wire);
     }
-    const d = `M ${a.point.x} ${ay} C ${a.point.x} ${rise}, ${b.point.x} ${rise}, ${b.point.x} ${by}`;
     if (wire.path.getAttribute('d') !== d) wire.path.setAttribute('d', d);
     elements.push(wire.path);
   });
@@ -650,6 +746,30 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && ui.projectList.hidden) closeDetail();
 });
 window.addEventListener('resize', () => drawWires(lastState));
+
+function selectView(view) {
+  const main = document.querySelector('.app-main');
+  main.dataset.view = view;
+  document.querySelectorAll('.view-tab').forEach((button) => {
+    const selected = button.dataset.view === view;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+  document.querySelectorAll('.nav-item').forEach((button) => {
+    const selected = button.dataset.section === (view === 'activity' ? 'activity' : 'workflow');
+    button.classList.toggle('on', selected);
+    if (selected) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  if (view === 'graph') requestAnimationFrame(() => drawWires(lastState));
+}
+
+document.querySelectorAll('.view-tab').forEach((button) => {
+  button.addEventListener('click', () => selectView(button.dataset.view));
+});
+document.querySelectorAll('.nav-item').forEach((button) => {
+  button.addEventListener('click', () => selectView(button.dataset.section === 'activity' ? 'activity' : 'graph'));
+});
 
 tick();
 tickActivity();

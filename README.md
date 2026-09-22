@@ -160,7 +160,7 @@ templates/     the instructions `devsup claude-md` / `agents-md` install
 Everything durable lives under `$DEVSUPERVISOR_HOME` (default
 `~/.devsupervisor`); point it at a temp directory for an isolated instance.
 
-`./scripts/test.sh` — 419 tests, no network, no paid calls.
+`./scripts/test.sh` — 423 tests, no network, no paid calls.
 
 Local, single machine, one supervisor loop at a time. Providers: `mock` and
 `claude-cli` (needs `claude` on `PATH`). Runs from a checkout; no package yet.

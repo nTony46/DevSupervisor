@@ -133,6 +133,23 @@ class StatusMappingTests(DashboardTestCase):
         self.assertIsNotNone(agent["elapsed_s"])
         self.assertGreaterEqual(agent["elapsed_s"], 0)
 
+    def test_a_node_carries_what_the_card_states_about_the_job(self):
+        """Branch, provider and review policy are read off the job, never invented."""
+        project = self.make_project()
+        job = self.running_job(project, branch="slice/rc-e", provider="claude-cli",
+                               effort="high", review_policy="independent")
+        agent = _agent(self.reader().state(project["id"]), job["id"])
+        self.assertEqual(agent["branch"], "slice/rc-e")
+        self.assertEqual(agent["provider"], "claude-cli")
+        self.assertEqual(agent["effort"], "high")
+        self.assertEqual(agent["review_policy"], "independent")
+
+    def test_a_node_without_a_branch_says_so(self):
+        project = self.make_project()
+        job = self.running_job(project)
+        agent = _agent(self.reader().state(project["id"]), job["id"])
+        self.assertIsNone(agent["branch"])
+
     def test_the_lease_count_is_the_live_one(self):
         project = self.make_project()
         job = self.running_job(project)
@@ -952,6 +969,18 @@ class ConsoleStylingTests(DashboardTestCase):
         super().setUp()
         self.css = (STATIC / "style.css").read_text()
         self.js = (STATIC / "app.js").read_text()
+
+    def test_the_review_handoff_is_never_a_fixed_string(self):
+        """The footer under a builder reports the ledger: the reviewer that exists,
+        or the job's own status. A constant would claim a review nobody dispatched."""
+        self.assertNotIn("awaiting candidate", self.js)
+        self.assertIn("handoffFor(", self.js)
+        for word in ("reviewers.get(agent.id)", "REVIEWED.has(agent.job_status)",
+                     "agent.review_policy === 'none'"):
+            self.assertIn(word, self.js)
+
+    def test_roles_are_matched_regardless_of_case(self):
+        self.assertIn("toLowerCase()", self.js[self.js.index("const isBuilder"):][:200])
 
     def test_every_agent_status_has_a_node_style(self):
         for status in (summary.AGENT_ACTIVE, summary.AGENT_WAITING, summary.AGENT_BLOCKED,

@@ -347,6 +347,13 @@ class Reader:
             "status": status,
             "job_status": job["status"],
             "line": line,
+            "title": summary.truncate(
+                (job.get("metadata") or {}).get("title") or line, 80),
+            "provider": (run or {}).get("provider") or job["provider"],
+            "model": (run or {}).get("model_resolved") or job["model"],
+            "effort": (run or {}).get("effort") or job["effort"],
+            "branch": job["branch"],
+            "review_policy": job["review_policy"],
             "elapsed_s": elapsed,
             "reviews": job["reviews_job_id"],
             "revision_of": job["revision_of"],
