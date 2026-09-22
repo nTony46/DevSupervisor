@@ -35,6 +35,7 @@ const ui = {
   releaseGate: el('release-gate'), gateProgress: el('gate-progress'),
   library: el('library-dialog'), libraryKicker: el('library-kicker'),
   libraryTitle: el('library-title'), libraryCopy: el('library-copy'), libraryList: el('library-list'),
+  libraryFootnote: el('library-footnote'), libraryDone: el('library-done'),
   more: el('more'), filters: el('filters'), detail: el('detail'),
   detailRole: el('detail-role'), detailTitle: el('detail-title'),
   detailState: el('detail-state'), detailBody: el('detail-body'), err: el('err'),
@@ -498,10 +499,60 @@ const ROLE_NAMES = {
   supervisor: 'Workflow coordinator', build: 'Builder', qa: 'QA engineer',
   security: 'Security reviewer', landing: 'Landing agent', freeze: 'Freeze agent',
 };
+const ROLE_INSTRUCTIONS = {
+  supervisor: 'Coordinate the workflow, delegate bounded tasks, and keep handoffs and decisions visible.',
+  planner: 'Turn the objective into a dependency-aware plan with clear deliverables and acceptance criteria.',
+  architect: 'Define implementation boundaries and technical direction. Return decisions and supporting evidence.',
+  build: 'Implement the assigned change in the isolated worktree. Keep the change scoped and report validation evidence.',
+  reviewer: 'Review the candidate independently. Return a clear verdict with concrete blockers or supporting evidence.',
+  specialist: 'Examine the assigned technical or domain concern and return focused findings with evidence.',
+  security: 'Inspect trust boundaries and security-sensitive behavior. Report concrete risks and verification evidence.',
+  benchmark: 'Measure behavior against the controlled baseline and report reproducible results.',
+  evaluator: 'Evaluate the verified outcome against the workflow objective and acceptance criteria.',
+  researcher: 'Collect relevant repository or external evidence and cite the sources used for the decision.',
+  investigator: 'Inspect the relevant code, reproduce the issue, and return evidence with file references. Do not modify source files.',
+  qa: 'Verify acceptance behavior and regressions with reproducible checks. Report failures with evidence.',
+  landing: 'Integrate the approved candidate into the target branch and verify the resulting repository state.',
+  freeze: 'Record the approved artifact as authoritative and preserve its provenance.',
+  operator: 'Perform the bounded operational verification and report the observed state with evidence.',
+};
 
 function roleName(role) {
   if (ROLE_NAMES[role]) return ROLE_NAMES[role];
   return String(role || 'Agent').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function providerName(provider, model) {
+  const value = String(provider || '').toLowerCase();
+  if (value.includes('codex')) return 'Codex';
+  if (value.includes('claude')) return 'Claude';
+  if (String(model || '').toLowerCase().includes('claude')) return 'Claude';
+  return 'Resolved by policy';
+}
+
+function profileField(labelText, control, className) {
+  const label = node('label', className || 'profile-field');
+  label.appendChild(node('span', null, labelText));
+  label.appendChild(control);
+  return label;
+}
+
+function readonlyInput(value) {
+  const input = node('input');
+  input.type = 'text';
+  input.value = value || '';
+  input.readOnly = true;
+  input.tabIndex = -1;
+  return input;
+}
+
+function readonlySelect(value) {
+  const select = node('select');
+  select.disabled = true;
+  const option = node('option', null, value || 'Resolved by policy');
+  option.selected = true;
+  select.appendChild(option);
+  return select;
 }
 
 function libraryCard(profile) {
@@ -530,7 +581,7 @@ function profileCard(profile) {
   const card = node('button', 'agent-profile-card');
   card.type = 'button';
   card.dataset.provider = profile.provider || 'policy';
-  card.setAttribute('aria-label', `Inspect ${roleName(profile.role)} configuration`);
+  card.setAttribute('aria-label', `Configure ${roleName(profile.role)}`);
   card.addEventListener('click', () => showProfile(profile));
   const top = node('span', 'profile-top');
   top.appendChild(node('span', 'agent-glyph', profile.provider === 'codex' ? '›_' : '✳'));
@@ -542,7 +593,7 @@ function profileCard(profile) {
   const settings = [profile.provider || 'Policy provider', profile.model,
     profile.effort ? `${profile.effort} thinking` : ''].filter(Boolean).join(' · ');
   footer.appendChild(node('span', null, settings));
-  footer.appendChild(node('span', 'profile-action', 'Inspect configuration ↗'));
+  footer.appendChild(node('span', 'profile-action', 'Configure ↗'));
   card.appendChild(footer);
   return card;
 }
@@ -561,34 +612,47 @@ function renderAgentLibrary(state) {
 }
 
 function showProfile(profile) {
-  setText(ui.libraryKicker, 'Reusable profile');
-  setText(ui.libraryTitle, `${roleName(profile.role)} configuration`);
-  setText(ui.libraryCopy, ROLE_COPY[profile.role] || 'Reusable workflow role.');
-  const details = node('dl', 'profile-details');
-  const fields = [
-    ['Provider', profile.provider || 'Resolved by routing policy'],
-    ['Model', profile.model || 'Resolved by routing policy'],
-    ['Thinking', profile.effort || 'Default'],
-    ['Access', profile.access],
-    ['Live instances', profile.instances],
-    ['Source', profile.source],
-  ];
-  fields.forEach(([label, value]) => {
-    details.appendChild(node('dt', null, label));
-    details.appendChild(node('dd', null, value));
-  });
-  ui.libraryList.replaceChildren(details);
+  ui.library.dataset.kind = 'profile';
+  setText(ui.libraryKicker, 'Agent profile');
+  setText(ui.libraryTitle, `Configure ${roleName(profile.role)}`);
+  setText(ui.libraryCopy, '');
+  setText(ui.libraryFootnote, 'Live observer · Profile changes are not written by this dashboard.');
+  setText(ui.libraryDone, 'Close');
+
+  const form = node('form', 'profile-form');
+  form.addEventListener('submit', (event) => event.preventDefault());
+  form.appendChild(profileField('Agent name', readonlyInput(roleName(profile.role))));
+  const row = node('div', 'profile-field-row');
+  row.appendChild(profileField('Provider', readonlySelect(providerName(profile.provider, profile.model))));
+  row.appendChild(profileField('Thinking', readonlySelect(
+    String(profile.effort || 'Default').replace(/^./, (letter) => letter.toUpperCase()))));
+  form.appendChild(row);
+  form.appendChild(profileField('Model', readonlySelect(profile.model || 'Default reasoning model')));
+  const instructions = node('textarea');
+  instructions.rows = 4;
+  instructions.value = ROLE_INSTRUCTIONS[profile.role] || ROLE_COPY[profile.role] || 'Reusable workflow role.';
+  instructions.readOnly = true;
+  instructions.tabIndex = -1;
+  form.appendChild(profileField('Agent instructions', instructions));
+  form.appendChild(node('p', 'profile-form-note',
+    `Effective ${profile.source || 'policy'} · ${profile.access || 'policy access'} · ${profile.instances || 0} live instance${profile.instances === 1 ? '' : 's'}.`));
+  form.appendChild(node('p', 'profile-form-safety',
+    'Current runs keep their saved configuration. This live dashboard does not modify routing policy or agent prompts.'));
+  ui.libraryList.replaceChildren(form);
   if (typeof ui.library.showModal === 'function') ui.library.showModal();
   else ui.library.setAttribute('open', '');
 }
 
 function showLibrary(kind) {
   const assignments = kind === 'assignments';
+  ui.library.dataset.kind = assignments ? 'assignments' : 'profiles';
   setText(ui.libraryKicker, assignments ? 'Current workflow' : 'Reusable profiles');
   setText(ui.libraryTitle, assignments ? 'Agent assignments' : 'Agent library');
   setText(ui.libraryCopy, assignments
     ? 'Each row is a separate agent instance with its own task and runtime settings.'
     : 'Roles define how agents work. Live assignments are separate instances of these reusable profiles.');
+  setText(ui.libraryFootnote, 'Effective settings from durable state and routing policy.');
+  setText(ui.libraryDone, 'Done');
   if (assignments) {
     const profiles = (lastState.agents || []).filter((agent) => agent.id).map((agent) => ({
       role: agent.role, provider: agent.provider, model: agent.model, effort: agent.effort,

@@ -989,7 +989,28 @@ button { color: inherit; }
 .library-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--seam); }
 .library-facts span { padding: 3px 6px; border-radius: 4px; background: var(--console-2); color: var(--ink-3); font: 9px var(--mono); }
 .dialog-foot { display: flex; align-items: center; gap: 20px; padding: 14px 22px; border-top: 1px solid var(--seam); color: var(--ink-4); font-size: 10px; }
-.dialog-foot button { margin-left: auto; padding: 6px 12px; border: 1px solid var(--seam-2); border-radius: 6px; background: transparent; color: var(--ink-2); cursor: pointer; }
+.dialog-foot button { margin-left: auto; min-width: 76px; padding: 7px 13px; border: 1px solid var(--seam-2); border-radius: 6px; background: transparent; color: var(--ink-2); cursor: pointer; }
+.dialog-foot button:hover { border-color: var(--seam-3); background: var(--console-2); color: var(--ink); }
+.library-dialog[data-kind="profile"] { width: min(620px,calc(100vw - 32px)); }
+.library-dialog[data-kind="profile"] .dialog-head { min-height: 76px; align-items: center; padding: 20px 28px; }
+.library-dialog[data-kind="profile"] .dialog-head .eyebrow,.library-dialog[data-kind="profile"] .dialog-copy { display: none; }
+.library-dialog[data-kind="profile"] .dialog-head h2 { font-size: 19px; }
+.library-dialog[data-kind="profile"] .library-list { display: block; max-height: min(610px,calc(100vh - 190px)); padding: 24px 28px 26px; }
+.library-dialog[data-kind="profile"] .dialog-foot { min-height: 68px; padding: 14px 28px; }
+.library-dialog[data-kind="profile"] .dialog-foot button { border-color: rgba(72,216,255,.42); background: rgba(72,216,255,.12); color: var(--signal); }
+.profile-form { display: grid; gap: 17px; }
+.profile-field { display: grid; gap: 7px; min-width: 0; color: var(--ink-3); font-size: 11px; }
+.profile-field-row { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.profile-field input,.profile-field select,.profile-field textarea {
+  width: 100%; min-width: 0; border: 1px solid var(--seam-3); border-radius: 6px;
+  background: var(--deck); color: var(--ink-2); font: 12px/1.5 var(--font);
+  opacity: 1; -webkit-text-fill-color: var(--ink-2);
+}
+.profile-field input,.profile-field select { min-height: 42px; padding: 8px 12px; }
+.profile-field select { appearance: auto; }
+.profile-field textarea { min-height: 104px; padding: 11px 12px; resize: none; }
+.profile-form-note,.profile-form-safety { margin: -3px 0 0; color: var(--ink-4); font-size: 10px; line-height: 1.55; }
+.profile-form-safety { margin-top: 0; padding-top: 14px; border-top: 1px solid var(--seam); color: var(--ink-3); }
 
 /* The library follows the original workflow concept: a quiet, full-page
    catalogue with large profiles instead of another dashboard popover. */
@@ -1066,15 +1087,6 @@ button { color: inherit; }
 .profile-footer > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-action { flex: none; color: var(--ink-2); }
 .agent-profile-card:hover .profile-action { color: var(--signal); }
-.profile-details {
-  display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 0;
-  margin: 0; padding: 16px 22px 22px;
-}
-.profile-details dt,.profile-details dd { margin: 0; padding: 11px 0; border-bottom: 1px solid var(--seam); }
-.profile-details dt { color: var(--ink-4); font: 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
-.profile-details dd { color: var(--ink-2); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
-.profile-details dt:nth-last-of-type(1),.profile-details dd:last-child { border-bottom: 0; }
-
 .app-main[data-view="library"] .agent-library-page { display: block; }
 .app-main:not([data-view="library"]) .agent-library-page { display: none; }
 .app-main[data-view="library"] .workflow-head,
@@ -1108,5 +1120,6 @@ button { color: inherit; }
   .library-page-head { display: block; padding-bottom: 28px; }.library-page-head h1 { font-size: 26px; }.policy-badge { margin-top: 18px; }
   .library-toolbar { display: grid; gap: 12px; }.library-toolbar > span { white-space: normal; }.library-search { width: 100%; }
   .agent-profile-grid { grid-template-columns: minmax(0,1fr); gap: 12px; }.agent-profile-card { min-height: 205px; padding: 19px; }
-  .profile-details { grid-template-columns: 95px minmax(0,1fr); padding-left: 16px; padding-right: 16px; }
+  .library-dialog[data-kind="profile"] .dialog-head,.library-dialog[data-kind="profile"] .library-list,.library-dialog[data-kind="profile"] .dialog-foot { padding-left: 18px; padding-right: 18px; }
+  .profile-field-row { grid-template-columns: minmax(0,1fr); }
 }
