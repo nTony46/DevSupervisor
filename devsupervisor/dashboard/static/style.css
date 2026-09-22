@@ -1123,3 +1123,85 @@ button { color: inherit; }
   .library-dialog[data-kind="profile"] .dialog-head,.library-dialog[data-kind="profile"] .library-list,.library-dialog[data-kind="profile"] .dialog-foot { padding-left: 18px; padding-right: 18px; }
   .profile-field-row { grid-template-columns: minmax(0,1fr); }
 }
+
+/* Personal v0.1: the coordinator and its parallel assignments are the focal
+   point. Avenir task titles, inset controls, 4px rhythm, and restrained cyan
+   connect navigation, cards, inspector, and profile configuration. */
+:root {
+  --void: #0e1114; --deck: #12161a; --console: #181d23; --console-2: #202830;
+  --ink: #f2f5f8; --ink-2: #ccd5df; --ink-3: #acb8c6; --ink-4: #919eae;
+  --signal: #80d3ea; --seam: rgba(199,210,223,.13); --seam-2: rgba(199,210,223,.23);
+}
+.icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.app-shell { grid-template-columns: 224px minmax(0,1fr); }
+.sidebar { padding-top: 26px; }
+.sidebar .brand-mark { display: grid; place-items: center; width: 26px; height: 26px; transform: none; box-shadow: none; border-width: 1px; color: var(--signal); }
+.brand-mark .icon { width: 17px; height: 17px; }
+.secondary-action { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; font-size: 12px; }
+.app-main .bar { min-height: 64px; }
+.workflow-head h1 { max-width: 960px; font-size: 28px; font-weight: 600; }
+.workflow-head { padding-top: 28px; }
+.view-tab { min-height: 44px; font-size: 13px; }
+.app-main .graph-panel { background: transparent; border: 0; box-shadow: none; padding: 20px 0 0; }
+.graph-heading { margin-bottom: 0; }
+.graph-heading p,.graph-summary { display: none; }
+.graph { padding: 24px 0; }
+.node.supervisor { width: 420px; max-width: 100%; padding: 20px; border-color: rgba(128,211,234,.45); background: #18232a; box-shadow: none; }
+.node.supervisor .role { font-size: 11px; letter-spacing: .1em; }
+.node.supervisor .line { font-size: 19px; font-weight: 600; margin-top: 14px; }
+.node.supervisor .note { margin-top: 10px; font-size: 12px; line-height: 1.65; }
+.coordinator-footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--seam); color: var(--ink-3); font-size: 11px; }
+.tier-workers { align-items: stretch; gap: 16px; margin-top: 58px; }
+.builder-lane { flex: 1 1 205px; min-width: 0; max-width: 280px; display: flex; flex-direction: column; position: relative; }
+.tier-workers .builder-lane > .node { width: 100%; min-width: 0; max-width: none; flex: 1; }
+.tier-workers .node { display: flex; flex-direction: column; padding: 18px 16px; background: var(--console); border-color: var(--seam-2); box-shadow: none; }
+.tier-workers .node[data-status="ACTIVE"] { border-color: rgba(128,211,234,.62); background: #17252d; }
+.tier-workers .node .node-head { order: 0; }
+.tier-workers .node .line { order: 1; font-size: 16px; line-height: 1.5; margin-top: 18px; }
+.assignment-summary { margin-top: 10px; color: var(--ink-3); font-size: 12px; line-height: 1.65; order: 2; }
+.tier-workers .node .runtime { order: 3; margin: 20px 0 12px; }
+.tier-workers .node .state { order: 4; margin-top: auto; padding-top: 4px; font-size: 11px; }
+.tier-workers .node .branch { order: 5; width: 100%; font-size: 10px; }
+.builder-lane .node .handoff { display: none; }
+.review-handoff { position: relative; margin-top: 24px; min-height: 70px; width: 100%; padding: 14px; text-align: left; background: var(--console); border: 1px solid var(--seam-2); border-radius: 7px; cursor: pointer; }
+.review-handoff::before { content: ''; position: absolute; height: 25px; left: 50%; bottom: 100%; width: 1px; background: var(--wire); }
+.review-handoff strong { display: block; color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.review-handoff small { display: block; margin-top: 5px; color: var(--ink-3); font-size: 11px; }
+.review-handoff:hover { border-color: var(--signal); }
+.flow-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; color: var(--ink-4); font-size: 11px; padding: 12px 0 24px; }
+.attention { margin-top: 4px; }
+.capacity { margin-bottom: 8px; }
+.node.selected { outline: 2px solid var(--signal); outline-offset: 3px; }
+.detail { inset: 0 0 0 auto; width: 380px; max-width: 100vw; height: 100dvh; max-height: 100dvh; padding: 24px; background: var(--console); }
+.detail-head { padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--seam); }
+.detail-role { font: 10px var(--mono); margin-bottom: 16px; }
+.detail-title > span:last-child { font-size: 20px; line-height: 1.4; }
+.detail-head button { min-width: 40px; min-height: 40px; }
+.detail dl { grid-template-columns: 95px minmax(0,1fr); gap: 12px 16px; }
+.detail dt.section { grid-column: 1 / -1; margin-top: 28px; padding: 0 0 10px; color: var(--ink-3); font: 10px var(--mono); letter-spacing: .1em; }
+.detail dd { font-size: 12px; line-height: 1.7; }
+.detail dt { color: var(--ink-4); }
+.profile-form-note,.profile-form-safety { font-size: 11px; }
+.profile-field { font-size: 12px; }
+.profile-field input,.profile-field select,.profile-field textarea { font-size: 13px; }
+.library-dialog[data-kind="profile"] { width: min(540px,calc(100vw - 32px)); }
+.library-dialog[data-kind="profile"] .dialog-head,.library-dialog[data-kind="profile"] .library-list,.library-dialog[data-kind="profile"] .dialog-foot { padding-left: 24px; padding-right: 24px; }
+.agent-profile-card[data-provider="claude-cli"] .profile-top .agent-glyph { background: #382a24; color: #e7ad88; }
+@media (max-width: 1200px) {
+ .builder-lane { flex-basis: 220px; max-width: 340px; }
+}
+@media (max-width: 700px) {
+ .app-shell { display: block; }
+ .sidebar { padding: 12px 16px; }
+ .app-main .bar { min-height: 44px; }
+ .workflow-head h1 { font-size: 25px; }
+ .head-actions { display: flex; margin-top: 16px; }
+ .workflow-head { display: block; }
+ .tier-workers { margin-top: 24px; }
+ .builder-lane { flex-basis: 100%; max-width: none; }
+ .tier-workers .node { width: 100%; }
+ .node.supervisor { width: 100%; }
+ .detail { width: 100%; left: 0; top: 0; }
+ .flow-caption { display: grid; }
+ .library-dialog[data-kind="profile"] .dialog-head,.library-dialog[data-kind="profile"] .library-list,.library-dialog[data-kind="profile"] .dialog-foot { padding-left: 18px; padding-right: 18px; }
+}

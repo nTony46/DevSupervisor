@@ -8,9 +8,30 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<svg aria-hidden="true" style="display:none"><defs>
+<symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M6 9v9h9M9 6h9v9"/></symbol>
+<symbol id="i-agents" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 3v3M8 12h.01M16 12h.01M9 16h6M1 11v4M23 11v4"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2"/></symbol>
+<symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10M18 7c0 7-12 3-12 10"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L20 8a2 2 0 0 0-5-5L4 14z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+<symbol id="i-decision" viewBox="0 0 24 24"><path d="m12 3 9 9-9 9-9-9zM12 8v5M12 16h.01"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="17" r="3" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-git" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M2 12h6m8 0h6"/></symbol>
+</defs></svg>
 <div class="app-shell">
   <aside class="sidebar" aria-label="Dashboard navigation">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>DevSupervisor</div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#i-flow"/></svg></span>DevSupervisor</div>
     <div class="project">
       <span class="project-avatar" aria-hidden="true">D</span>
       <div class="project-copy">
@@ -24,13 +45,13 @@
     </div>
     <nav class="nav">
       <button type="button" class="nav-item on" data-section="workflow" aria-current="page">
-        <span class="nav-icon" aria-hidden="true">◇</span><span>Workflows</span><b class="nav-count" id="workflow-count">1</b>
+        <svg class="icon nav-icon" aria-hidden="true"><use href="#i-flow"/></svg><span>Workflows</span><b class="nav-count" id="workflow-count">1</b>
       </button>
       <button type="button" class="nav-item" data-section="agents" id="agent-library-open">
-        <span class="nav-icon" aria-hidden="true">◉</span><span>Agent library</span><b class="nav-count" id="agent-count">0</b>
+        <svg class="icon nav-icon" aria-hidden="true"><use href="#i-agents"/></svg><span>Agent library</span><b class="nav-count" id="agent-count">0</b>
       </button>
       <button type="button" class="nav-item" data-section="activity">
-        <span class="nav-icon" aria-hidden="true">↻</span><span>Run history</span>
+        <svg class="icon nav-icon" aria-hidden="true"><use href="#i-history"/></svg><span>Run history</span>
       </button>
     </nav>
     <div class="nav-group" id="current-workflow-nav">
@@ -63,7 +84,7 @@
         </div>
       </div>
       <div class="head-actions">
-        <button type="button" class="secondary-action" id="assignments-open">Agent assignments</button>
+        <button type="button" class="secondary-action" id="assignments-open"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Agent assignments</button>
         <span class="mode-badge"><span class="dot"></span>Live state</span>
       </div>
     </section>
@@ -115,6 +136,7 @@
           <div class="tier tier-top" id="tier-supervisor"></div>
           <div class="tier tier-workers" id="tier-workers"></div>
         </div>
+        <div class="flow-caption"><span>Each assignment keeps its own task, branch, and execution record.</span><span>Select an agent to inspect its work.</span></div>
         <section class="attention" id="attention-section" hidden>
           <h3>Needs attention</h3><div class="attention-list" id="attention-list"></div>
         </section>
@@ -125,7 +147,7 @@
       </section>
 
       <section class="release-gate" id="release-gate" hidden>
-        <span class="gate-lock" aria-hidden="true">◇</span>
+        <svg class="icon gate-lock" aria-hidden="true"><use href="#i-lock"/></svg>
         <div><strong>Release gate</strong><p>Builder candidates require their configured review before integration.</p></div>
         <span class="gate-progress" id="gate-progress"></span>
       </section>
@@ -147,7 +169,7 @@
   </div>
 </div>
 
-<aside class="detail" id="detail" hidden aria-live="polite">
+<aside class="detail" id="detail" hidden aria-label="Selected agent details">
   <div class="detail-head">
     <div class="detail-title"><span class="detail-role" id="detail-role"></span><span id="detail-title"></span></div>
     <button type="button" id="detail-close" aria-label="Close">✕</button>

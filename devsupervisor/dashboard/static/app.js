@@ -50,6 +50,9 @@ let selectedJob = null;
 let hotKey = null;
 let providerFilter = 'all';
 let libraryQuery = '';
+let librarySignature = '';
+let detailTrigger = null;
+let detailRequest = 0;
 
 /* --- tiny DOM helpers: every value lands as text, never as markup --- */
 function node(tag, className, text) {
@@ -249,12 +252,13 @@ function supervisorNode(state) {
     supervisorBox.appendChild(node('div', 'line'));
     supervisorBox.appendChild(node('div', 'gate-id'));
     supervisorBox.appendChild(node('div', 'note'));
+    supervisorBox.appendChild(node('div', 'coordinator-footer'));
   }
   const box = supervisorBox;
   box.classList.toggle('gate', gated);
   setData(box, 'status', gated ? 'WAITING' : sup.status === 'RUNNING' ? 'ACTIVE' : 'IDLE');
   setText(box.querySelector('.state .label'), gated ? HUMAN_HEADLINE : sup.status || '');
-  setText(box.querySelector('.line'), sup.line || '');
+  setText(box.querySelector('.line'), gated ? sup.line || '' : (state.goal || {}).title || sup.line || 'Workflow coordinator');
   const gateId = box.querySelector('.gate-id');
   gateId.hidden = !(gated && sup.detail);
   setText(gateId, gated ? sup.detail || '' : '');
@@ -271,12 +275,14 @@ function supervisorNode(state) {
       note.textContent = sup.note;
     }
   } else if (!gated && sup.detail) {
-    note.textContent = sup.detail;
+    note.textContent = (state.goal || {}).description || (sup.detail === (state.goal || {}).title ? 'Coordinate assignments, collect candidate evidence, and track review handoffs.' : sup.detail);
   }
+  setText(box.querySelector('.coordinator-footer'), `${(state.agents || []).filter(a => a.id && isBuilder(a)).length} builder instances · ${sup.line || 'Live workflow state'}`);
   return box;
 }
 
 const workerNodes = new Map();
+const laneNodes = new Map();
 const agentKey = (agent) => agent.id || `role:${agent.role}`;
 
 // Operators write roles by hand, so "BUILDER" and "build" are the same role.
@@ -322,6 +328,7 @@ function workerNode(agent, builderNumber, handoffLine) {
     state.appendChild(node('span', 't'));
     box.appendChild(state);
     box.appendChild(node('div', 'line'));
+    box.appendChild(node('div', 'assignment-summary'));
     const runtime = node('div', 'runtime');
     const runtimeAgent = node('span', 'runtime-agent');
     runtimeAgent.appendChild(node('span', 'provider'));
@@ -349,6 +356,7 @@ function workerNode(agent, builderNumber, handoffLine) {
   const line = box.querySelector('.line');
   setText(line, agent.title || agent.line || '');
   if (line.title !== (agent.line || '')) line.title = agent.line || '';
+  setText(box.querySelector('.assignment-summary'), agent.line || '');
   const runtime = box.querySelector('.runtime');
   setText(runtime.querySelector('.provider'), agent.provider || '');
   setText(runtime.querySelector('.model'), agent.model || '');
@@ -385,12 +393,34 @@ function renderGraph(state) {
   const reviewers = new Map();
   allAgents.forEach((agent) => { if (agent.id && agent.reviews) reviewers.set(agent.reviews, agent); });
   const card = (agent) => workerNode(agent, builderNumbers.get(agent.id), handoffFor(agent, reviewers));
-  const elements = active.map(card);
+  const elements = active.map((agent) => {
+    const primary = card(agent);
+    if (!isBuilder(agent) || !handoffFor(agent, reviewers)) return primary;
+    let lane = laneNodes.get(agent.id);
+    if (!lane) {
+      lane = node('article', 'builder-lane');
+      const review = node('button', 'review-handoff');
+      review.type = 'button';
+      review.appendChild(node('strong', null, 'Independent review'));
+      review.appendChild(node('small'));
+      lane.appendChild(review);
+      laneNodes.set(agent.id, lane);
+    }
+    const review = lane.querySelector('.review-handoff');
+    const reviewer = reviewers.get(agent.id);
+    setText(review.querySelector('small'), handoffFor(agent, reviewers));
+    review.onclick = () => showDetail(reviewer ? reviewer.id : agent.id);
+    review.setAttribute('aria-label', `Inspect review handoff for ${agent.title || agent.id}`);
+    reconcile(lane, [primary, review]);
+    return lane;
+  });
+  laneNodes.forEach((_, id) => { if (!active.some(a => a.id === id)) laneNodes.delete(id); });
   const attentionElements = attention.map(card);
   const keys = new Set(active.concat(attention).map(agentKey));
   workerNodes.forEach((_, key) => { if (!keys.has(key)) workerNodes.delete(key); });
   if (!active.length && !attention.length) {
-    if (!emptyBox) emptyBox = node('div', 'empty', 'No agents registered for this project');
+    if (!emptyBox) emptyBox = node('div', 'empty');
+    setText(emptyBox, providerFilter === 'all' ? 'No active assignments. Recorded activity is available in Run history.' : 'No assignments match this provider.');
     elements.push(emptyBox);
   }
   reconcile(ui.workers, elements);
@@ -560,7 +590,7 @@ function libraryCard(profile) {
   const head = node('div', 'library-card-head');
   head.appendChild(node('span', 'agent-glyph', profile.provider === 'codex' ? '›_' : '✳'));
   const title = node('span');
-  title.appendChild(node('strong', null, profile.role));
+  title.appendChild(node('strong', null, profile.title || roleName(profile.role)));
   title.appendChild(node('small', null, ROLE_COPY[profile.role] || 'Reusable workflow role.'));
   head.appendChild(title);
   const count = node('span', 'instance-count', profile.instances
@@ -601,7 +631,10 @@ function profileCard(profile) {
 function renderAgentLibrary(state) {
   const profiles = state.agent_library || [];
   const query = libraryQuery.trim().toLowerCase();
-  const shown = profiles.filter((profile) => [profile.role, profile.provider, profile.model,
+  const signature = JSON.stringify([profiles, query]);
+  if (signature === librarySignature) return;
+  librarySignature = signature;
+  const shown = profiles.filter((profile) => [profile.role, roleName(profile.role), profile.provider, profile.model,
     profile.effort, profile.access, ROLE_COPY[profile.role]].filter(Boolean).join(' ').toLowerCase().includes(query));
   setText(ui.libraryProfileCount, profiles.length);
   if (!shown.length) {
@@ -633,11 +666,11 @@ function showProfile(profile) {
   instructions.value = ROLE_INSTRUCTIONS[profile.role] || ROLE_COPY[profile.role] || 'Reusable workflow role.';
   instructions.readOnly = true;
   instructions.tabIndex = -1;
-  form.appendChild(profileField('Agent instructions', instructions));
+  form.appendChild(profileField('Role guidance', instructions));
   form.appendChild(node('p', 'profile-form-note',
     `Effective ${profile.source || 'policy'} · ${profile.access || 'policy access'} · ${profile.instances || 0} live instance${profile.instances === 1 ? '' : 's'}.`));
   form.appendChild(node('p', 'profile-form-safety',
-    'Current runs keep their saved configuration. This live dashboard does not modify routing policy or agent prompts.'));
+    'Role guidance describes the role; it is not the saved prompt. Each assignment retains its recorded model, task, and execution state.'));
   ui.libraryList.replaceChildren(form);
   if (typeof ui.library.showModal === 'function') ui.library.showModal();
   else ui.library.setAttribute('open', '');
@@ -656,7 +689,7 @@ function showLibrary(kind) {
   if (assignments) {
     const profiles = (lastState.agents || []).filter((agent) => agent.id).map((agent) => ({
       role: agent.role, provider: agent.provider, model: agent.model, effort: agent.effort,
-      access: agent.branch || 'No branch', instances: 1,
+      title: agent.title || agent.id, access: agent.branch || 'No branch', instances: 1,
     }));
     ui.libraryList.replaceChildren(...profiles.map(libraryCard));
   } else {
@@ -715,6 +748,7 @@ function paintGradient(gradient, coords, fromTone, toTone) {
 
 function drawWires(state) {
   const box = ui.graph.getBoundingClientRect();
+  if (!box.width || !box.height) return;
   ui.wires.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
   const root = ui.supervisor.querySelector('.node');
   if (!root) { ui.wires.replaceChildren(); wireNodes.clear(); return; }
@@ -885,14 +919,6 @@ async function loadActivity(reset) {
 }
 
 /* --- detail panel --- */
-const DETAIL_SECTIONS = [
-  ['', ['summary', 'action', 'job_type', 'risk']],
-  ['work', ['branch', 'base_sha', 'result_sha', 'worktree']],
-  ['run', ['model', 'effort', 'attempt', 'revision', 'cost_usd', 'started_at']],
-  ['relations', ['reviews', 'revision_of']],
-];
-const DETAIL_LABELS = { cost_usd: 'cost', started_at: 'started', base_sha: 'base sha',
-  result_sha: 'result sha', job_type: 'type', revision_of: 'revision of' };
 const STATE_TONES = { RUNNING: 'signal', UNDER_REVIEW: 'signal', LANDING: 'signal',
   DISPATCHED: 'signal', REVISION_READY: 'signal', WAITING_HUMAN: 'hold', BLOCKED: 'fault',
   FAILED: 'fault', REJECTED: 'fault', DONE: 'landed', VERIFIED: 'landed', APPROVED: 'landed',
@@ -909,38 +935,42 @@ function detailValue(key, value) {
 }
 
 async function showDetail(jobId) {
+  const request = ++detailRequest;
+  if (ui.detail.hidden) detailTrigger = document.activeElement;
   try {
     const detail = await getJSON('/api/job?id=' + encodeURIComponent(jobId));
+    if (request !== detailRequest) return;
     selectedJob = detail.id || jobId;
-    ui.detailRole.textContent = detail.role || '';
-    ui.detailTitle.textContent = detail.id || jobId;
-    ui.detailState.textContent = detail.state || '';
-    ui.detailState.dataset.tone = STATE_TONES[detail.state] || '';
+    const agent = (lastState.agents || []).find(a => a.id === selectedJob);
+    ui.detailRole.textContent = `${roleName(detail.role)} instance`;
+    ui.detailTitle.textContent = (agent && agent.title) || detail.summary || detail.id;
+    ui.detailState.textContent = agent && agent.status === 'STALE' ? 'STALLED · no active lease' : detail.state || '';
+    ui.detailState.dataset.tone = agent && agent.status === 'STALE' ? 'hold' : STATE_TONES[detail.state] || '';
     ui.detailBody.replaceChildren();
-    const shown = new Set();
-    DETAIL_SECTIONS.forEach(([section, keys]) => {
-      const present = keys.filter((key) => detail[key] !== null && detail[key] !== undefined && detail[key] !== '');
+    function section(title, fields) {
+      const present = fields.filter(([, value]) => value !== null && value !== undefined && value !== '');
       if (!present.length) return;
-      if (section) ui.detailBody.appendChild(node('dt', 'section', section));
-      present.forEach((key) => {
-        shown.add(key);
-        ui.detailBody.appendChild(node('dt', null, DETAIL_LABELS[key] || key.replace(/_/g, ' ')));
-        const dd = node('dd', key.endsWith('sha') ? 'sha' : null, detailValue(key, detail[key]));
-        ui.detailBody.appendChild(dd);
+      ui.detailBody.appendChild(node('dt', 'section', title));
+      present.forEach(([label, value]) => {
+        ui.detailBody.appendChild(node('dt', null, label));
+        ui.detailBody.appendChild(node('dd', null, value));
       });
-    });
-    Object.entries(detail).forEach(([key, value]) => {
-      if (['id', 'role', 'state', 'artifacts'].includes(key) || shown.has(key)) return;
-      if (value === null || value === undefined || value === '') return;
-      ui.detailBody.appendChild(node('dt', null, key.replace(/_/g, ' ')));
-      ui.detailBody.appendChild(node('dd', null, detailValue(key, value)));
-    });
-    if ((detail.artifacts || []).length) ui.detailBody.appendChild(node('dt', 'section', 'artifacts'));
-    (detail.artifacts || []).forEach((artifact) => {
-      ui.detailBody.appendChild(node('dt', null, artifact.kind));
-      ui.detailBody.appendChild(node('dd', null, artifact.summary));
-    });
+    }
+    section('Agent configuration', [
+      ['Role', roleName(detail.role)], ['Provider', agent && agent.provider],
+      ['Model', detail.model], ['Thinking', detail.effort], ['Attempt', detail.attempt],
+    ]);
+    section('Assigned task', [['Scope', detail.summary], ['Activity', (agent && agent.line) || detail.action], ['Risk', detail.risk]]);
+    section('Isolated branch', [['Branch', detail.branch], ['Worktree', detail.worktree],
+      ['Base commit', detail.base_sha], ['Candidate', detail.result_sha]]);
+    section('Execution record', [['Instance', detail.id], ['Revision', detail.revision],
+      ['Started', detail.started_at && localMoment(detail.started_at)],
+      ['Cost', detail.cost_usd && detailValue('cost_usd', detail.cost_usd)]]);
+    section('Review handoff', [['Reviews', detail.reviews], ['Revision of', detail.revision_of],
+      ['Review policy', agent && agent.review_policy]]);
+    section('Recorded artifacts', (detail.artifacts || []).map(a => [a.kind, a.summary]));
     ui.detail.hidden = false;
+    el('detail-close').focus();
     renderGraph(lastState);
   } catch (error) {
     showError(error.message);
@@ -948,10 +978,12 @@ async function showDetail(jobId) {
 }
 
 function closeDetail() {
+  detailRequest += 1;
   if (ui.detail.hidden) return;
   ui.detail.hidden = true;
   selectedJob = null;
   renderGraph(lastState);
+  if (detailTrigger && detailTrigger.isConnected) detailTrigger.focus();
 }
 
 /* --- polling --- */
@@ -1056,6 +1088,7 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('resize', () => drawWires(lastState));
 
 function selectView(view) {
+  closeDetail();
   const main = document.querySelector('.app-main');
   main.dataset.view = view;
   setText(ui.crumbSection, view === 'library' ? 'Agent library' : view === 'activity' ? 'Run history' : 'Workflow');
