@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .. import clock, config, gitfacts
 from ..errors import DevSupervisorError
+from ..policy import permissions, routing, tools as tool_policy
 from ..state import machine
 from . import summary
 
@@ -184,6 +185,7 @@ class Reader:
             "pipeline": summary.pipeline(scope_jobs),
             "current": summary.current_line(agents),
             "agents": agents,
+            "agent_library": self._agent_library(jobs, agents),
             "active_count": counts["active"],
             "hidden_agents": counts["hidden"],
             "gates": gates,
@@ -208,12 +210,14 @@ class Reader:
         goal_id = anchor["goal_id"]
         if not goal_id:
             return None, [anchor]
-        goal_row = self._one("SELECT id, title, status FROM goals WHERE id = ?", (goal_id,))
+        goal_row = self._one(
+            "SELECT id, title, description, status FROM goals WHERE id = ?", (goal_id,))
         scope = [job for job in jobs if job["goal_id"] == goal_id]
         goal = None
         if goal_row:
             goal = {"id": goal_row["id"],
                     "title": summary.truncate(goal_row["title"], 90),
+                    "description": summary.truncate(goal_row.get("description"), 180),
                     "status": goal_row["status"]}
         return goal, scope
 
@@ -382,6 +386,49 @@ class Reader:
         return [row["role"] for row in self._rows(
             "SELECT role, COUNT(*) n FROM jobs WHERE project_id = ?"
             " GROUP BY role ORDER BY n DESC, role", (project_id,))]
+
+    @staticmethod
+    def _agent_library(jobs, agents):
+        """Reusable roles and their effective recent assignment settings.
+
+        This is descriptive state for the observer. It deliberately does not
+        invent editable profiles or resolve provider discovery on every poll.
+        A role with no routed job reports the built-in policy tier and effort;
+        a role that has run reports the durable values recorded on its newest
+        job. The UI can therefore distinguish a reusable role from each live
+        instance without becoming a second configuration store.
+        """
+        newest = {}
+        for job in jobs:  # jobs arrive newest first
+            role = "build" if str(job["role"]).lower() == "builder" else job["role"]
+            newest.setdefault(role, job)
+        live = {}
+        for agent in agents:
+            if agent.get("id"):
+                role = "build" if str(agent["role"]).lower() == "builder" else agent["role"]
+                live[role] = live.get(role, 0) + 1
+        default = routing.DEFAULT_POLICY["default"]
+        configured = routing.DEFAULT_POLICY.get("roles") or {}
+        profiles = []
+        for role in routing.ROUTED_ROLES:
+            job = newest.get(role)
+            policy = {**default, **configured.get(role, {})}
+            if role in permissions.PRIVILEGED_ROLES:
+                access = "shared state"
+            elif tool_policy.is_read_only(role):
+                access = "read only"
+            else:
+                access = "isolated writer"
+            profiles.append({
+                "role": role,
+                "provider": job.get("provider") if job else None,
+                "model": (job.get("model") if job else None) or policy.get("tier"),
+                "effort": (job.get("effort") if job else None) or policy.get("effort"),
+                "access": access,
+                "instances": live.get(role, 0),
+                "source": "recent assignment" if job else "policy default",
+            })
+        return profiles
 
     def _latest_run(self, job_id):
         return self._one(

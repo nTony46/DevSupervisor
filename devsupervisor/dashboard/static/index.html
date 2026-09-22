@@ -24,12 +24,21 @@
     </div>
     <nav class="nav">
       <button type="button" class="nav-item on" data-section="workflow" aria-current="page">
-        <span class="nav-icon" aria-hidden="true">◇</span>Workflow
+        <span class="nav-icon" aria-hidden="true">◇</span><span>Workflows</span><b class="nav-count" id="workflow-count">1</b>
+      </button>
+      <button type="button" class="nav-item" data-section="agents" id="agent-library-open">
+        <span class="nav-icon" aria-hidden="true">◉</span><span>Agent library</span><b class="nav-count" id="agent-count">0</b>
       </button>
       <button type="button" class="nav-item" data-section="activity">
-        <span class="nav-icon" aria-hidden="true">↻</span>Run history
+        <span class="nav-icon" aria-hidden="true">↻</span><span>Run history</span>
       </button>
     </nav>
+    <div class="nav-group" id="current-workflow-nav">
+      <span class="nav-label">Current workflow</span>
+      <button type="button" class="workflow-link" id="current-workflow-link">
+        <span class="dot" aria-hidden="true"></span><span id="sidebar-workflow-title">Loading…</span>
+      </button>
+    </div>
     <div class="sidebar-spacer"></div>
     <div class="read-only-note"><span class="dot"></span><div><strong>Live observer</strong><small>Read-only durable state</small></div></div>
   </aside>
@@ -44,6 +53,7 @@
       <div>
         <p class="eyebrow">CURRENT WORKFLOW <span id="workflow-id"></span></p>
         <h1 id="workflow-title">Loading workflow…</h1>
+        <p class="workflow-description" id="workflow-description"></p>
         <div class="workflow-meta">
           <span class="fact git" id="git" title="branch @ sha"></span>
           <span class="fact" id="active"></span>
@@ -52,18 +62,36 @@
           <span class="fact spend" id="spend"></span>
         </div>
       </div>
-      <span class="mode-badge"><span class="dot"></span>Live state</span>
+      <div class="head-actions">
+        <button type="button" class="secondary-action" id="assignments-open">Agent assignments</button>
+        <span class="mode-badge"><span class="dot"></span>Live state</span>
+      </div>
     </section>
 
     <div class="view-tabs" role="tablist" aria-label="Workflow views">
       <button type="button" class="view-tab on" data-view="graph" role="tab" aria-selected="true">Agent graph</button>
+      <button type="button" class="view-tab" data-view="lanes" role="tab" aria-selected="false">By lane <span id="lane-count">0</span></button>
       <button type="button" class="view-tab" data-view="activity" role="tab" aria-selected="false">Activity</button>
     </div>
 
     <main>
+      <section class="run-toolbar" aria-label="Assignment summary">
+        <div class="run-facts"><span><b id="toolbar-working">0</b> working</span><span><b id="toolbar-attention">0</b> need attention</span><span><b id="toolbar-worktrees">0</b> isolated worktrees</span></div>
+        <label class="provider-filter">Provider
+          <select id="provider-filter"><option value="all">All providers</option></select>
+        </label>
+      </section>
       <section class="panel pipeline-panel" id="pipeline-section">
         <div class="panel-heading"><h2>Execution path</h2><p class="current" id="current"></p></div>
         <div class="pipeline" id="pipeline"></div>
+      </section>
+
+      <section class="panel lane-panel" id="lane-section">
+        <div class="graph-heading">
+          <div><h2>Assignment lanes</h2><p>Each instance keeps its own task, branch, provider, and execution state.</p></div>
+        </div>
+        <div class="lane-list" id="lane-list"></div>
+        <div class="lane-alert" id="lane-alert" hidden><span aria-hidden="true">◇</span><div><strong>Assignment needs attention</strong><p id="lane-alert-text"></p></div></div>
       </section>
 
       <section class="panel graph-panel" id="graph-section">
@@ -83,6 +111,12 @@
           <summary>Available agent roles <span id="capacity-count"></span></summary>
           <div class="capacity-list" id="capacity-list"></div>
         </details>
+      </section>
+
+      <section class="release-gate" id="release-gate" hidden>
+        <span class="gate-lock" aria-hidden="true">◇</span>
+        <div><strong>Release gate</strong><p>Builder candidates require their configured review before integration.</p></div>
+        <span class="gate-progress" id="gate-progress"></span>
       </section>
 
       <section class="panel activity-panel" id="activity-section">
@@ -110,6 +144,12 @@
   <div class="detail-state" id="detail-state"></div>
   <dl id="detail-body"></dl>
 </aside>
+<dialog class="library-dialog" id="library-dialog" aria-labelledby="library-title">
+  <div class="dialog-head"><div><p class="eyebrow" id="library-kicker"></p><h2 id="library-title"></h2></div><button type="button" id="library-close" aria-label="Close">✕</button></div>
+  <p class="dialog-copy" id="library-copy"></p>
+  <div class="library-list" id="library-list"></div>
+  <div class="dialog-foot"><span>Effective settings from durable state and routing policy.</span><button type="button" id="library-done">Done</button></div>
+</dialog>
 <p class="err" id="err" hidden></p>
 <script src="/app.js"></script>
 </body>

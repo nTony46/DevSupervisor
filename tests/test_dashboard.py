@@ -157,6 +157,33 @@ class StatusMappingTests(DashboardTestCase):
         agent = _agent(self.reader().state(project["id"]), job["id"])
         self.assertIsNone(agent["branch"])
 
+    def test_agent_library_separates_a_role_from_its_live_instances(self):
+        project = self.make_project()
+        self.running_job(project, role="builder", provider="codex", model="gpt-6-sol",
+                         effort="medium")
+        profile = next(item for item in self.reader().state(project["id"])["agent_library"]
+                       if item["role"] == "build")
+        self.assertEqual(profile["instances"], 1)
+        self.assertEqual(profile["provider"], "codex")
+        self.assertEqual(profile["model"], "gpt-6-sol")
+        self.assertEqual(profile["effort"], "medium")
+        self.assertEqual(profile["access"], "isolated writer")
+
+    def test_unused_agent_roles_report_policy_defaults(self):
+        project = self.make_project()
+        profile = next(item for item in self.reader().state(project["id"])["agent_library"]
+                       if item["role"] == "reviewer")
+        self.assertEqual(profile["instances"], 0)
+        self.assertEqual(profile["source"], "policy default")
+        self.assertEqual(profile["effort"], "high")
+
+    def test_the_workflow_header_carries_its_saved_description(self):
+        project = self.make_project()
+        goal = self.make_goal(project=project, description="Coordinate five isolated lanes.")
+        self.running_job(project, goal=goal)
+        self.assertEqual(self.reader().state(project["id"])["goal"]["description"],
+                         "Coordinate five isolated lanes.")
+
     def test_the_lease_count_is_the_live_one(self):
         project = self.make_project()
         job = self.running_job(project)
@@ -988,6 +1015,13 @@ class ConsoleStylingTests(DashboardTestCase):
 
     def test_roles_are_matched_regardless_of_case(self):
         self.assertIn("toLowerCase()", self.js[self.js.index("const isBuilder"):][:200])
+
+    def test_the_workflow_shell_exposes_library_lanes_and_assignments(self):
+        html = (STATIC / "index.html").read_text()
+        for label in ("Agent library", "Agent assignments", "By lane"):
+            self.assertIn(label, html)
+        for renderer in ("renderLanes(", "showLibrary(", "renderProviderFilter("):
+            self.assertIn(renderer, self.js)
 
     def test_every_agent_status_has_a_node_style(self):
         for status in (summary.AGENT_ACTIVE, summary.AGENT_WAITING, summary.AGENT_BLOCKED,

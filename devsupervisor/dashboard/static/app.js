@@ -24,6 +24,14 @@ const ui = {
   capacity: el('capacity'), capacityList: el('capacity-list'), capacityCount: el('capacity-count'),
   workingCount: el('working-count'), attentionCount: el('attention-count'),
   workflowTitle: el('workflow-title'), workflowId: el('workflow-id'), crumbProject: el('crumb-project'),
+  workflowDescription: el('workflow-description'), sidebarWorkflowTitle: el('sidebar-workflow-title'),
+  workflowCount: el('workflow-count'), agentCount: el('agent-count'), laneCount: el('lane-count'),
+  toolbarWorking: el('toolbar-working'), toolbarAttention: el('toolbar-attention'),
+  toolbarWorktrees: el('toolbar-worktrees'), providerFilter: el('provider-filter'),
+  lanes: el('lane-list'), laneAlert: el('lane-alert'), laneAlertText: el('lane-alert-text'),
+  releaseGate: el('release-gate'), gateProgress: el('gate-progress'),
+  library: el('library-dialog'), libraryKicker: el('library-kicker'),
+  libraryTitle: el('library-title'), libraryCopy: el('library-copy'), libraryList: el('library-list'),
   more: el('more'), filters: el('filters'), detail: el('detail'),
   detailRole: el('detail-role'), detailTitle: el('detail-title'),
   detailState: el('detail-state'), detailBody: el('detail-body'), err: el('err'),
@@ -36,6 +44,7 @@ let activitySignature = '';
 let lastState = { agents: [] };
 let selectedJob = null;
 let hotKey = null;
+let providerFilter = 'all';
 
 /* --- tiny DOM helpers: every value lands as text, never as markup --- */
 function node(tag, className, text) {
@@ -109,6 +118,13 @@ function renderHeader(state) {
   const goal = state.goal || {};
   setText(ui.workflowTitle, goal.title || (state.project && state.project.name) || 'No active workflow');
   setText(ui.workflowId, goal.id || '');
+  setText(ui.sidebarWorkflowTitle, goal.title || 'No active workflow');
+  setText(ui.workflowCount, goal.id ? 1 : 0);
+  const active = state.active_count || 0;
+  setText(ui.workflowDescription, goal.description || (active
+    ? `One workflow coordinator, ${active} active assignment${active === 1 ? '' : 's'}, and explicit review handoffs.`
+    : 'Durable workflow state, assignments, and review handoffs.'));
+  setText(ui.agentCount, (state.agent_library || []).length);
   setText(ui.crumbProject, state.project ? state.project.name : 'Project');
 }
 
@@ -349,18 +365,20 @@ let emptyBox = null;
 
 function renderGraph(state) {
   reconcile(ui.supervisor, [supervisorNode(state)]);
-  const agents = state.agents || [];
+  const allAgents = state.agents || [];
+  const agents = allAgents.filter((agent) => agent.status === 'IDLE' || providerFilter === 'all'
+    || String(agent.provider || '').toLowerCase() === providerFilter);
   const active = agents.filter((agent) => !['IDLE', 'STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
   const attention = agents.filter((agent) => ['STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
   const idle = agents.filter((agent) => agent.status === 'IDLE');
   // Builders are numbered by job id so a card keeps its number while the
   // graph reorders around it.
   const builderNumbers = new Map();
-  agents.filter((agent) => agent.id && isBuilder(agent))
+  allAgents.filter((agent) => agent.id && isBuilder(agent))
     .map((agent) => agent.id).sort()
     .forEach((id, index) => builderNumbers.set(id, index + 1));
   const reviewers = new Map();
-  agents.forEach((agent) => { if (agent.id && agent.reviews) reviewers.set(agent.reviews, agent); });
+  allAgents.forEach((agent) => { if (agent.id && agent.reviews) reviewers.set(agent.reviews, agent); });
   const card = (agent) => workerNode(agent, builderNumbers.get(agent.id), handoffFor(agent, reviewers));
   const elements = active.map(card);
   const attentionElements = attention.map(card);
@@ -376,6 +394,10 @@ function renderGraph(state) {
   ui.attentionSection.hidden = !attentionElements.length;
   setText(ui.workingCount, active.filter((agent) => agent.status === 'ACTIVE').length);
   setText(ui.attentionCount, attention.length);
+  setText(ui.toolbarWorking, active.filter((agent) => agent.status === 'ACTIVE').length);
+  setText(ui.toolbarAttention, attention.length);
+  setText(ui.toolbarWorktrees, new Set(active.map((agent) => agent.branch).filter(Boolean)).size);
+  setText(ui.laneCount, active.filter(isBuilder).length);
 
   const capacity = idle.map((agent) => node('span', 'capacity-role', agent.role));
   if (state.hidden_agents) {
@@ -387,6 +409,133 @@ function renderGraph(state) {
   ui.capacity.hidden = !capacity.length;
   setText(ui.capacityCount, capacity.length ? `${idle.length} idle${state.hidden_agents ? ` · ${state.hidden_agents} hidden` : ''}` : '');
   requestAnimationFrame(() => drawWires(state));
+}
+
+function renderProviderFilter(state) {
+  const providers = Array.from(new Set((state.agents || [])
+    .map((agent) => agent.provider).filter(Boolean).map((value) => String(value).toLowerCase()))).sort();
+  const options = [node('option', null, 'All providers')];
+  options[0].value = 'all';
+  providers.forEach((provider) => {
+    const option = node('option', null, provider);
+    option.value = provider;
+    options.push(option);
+  });
+  if (providerFilter !== 'all' && !providers.includes(providerFilter)) providerFilter = 'all';
+  ui.providerFilter.replaceChildren(...options);
+  ui.providerFilter.value = providerFilter;
+  ui.providerFilter.closest('.provider-filter').hidden = providers.length < 2;
+}
+
+function renderLanes(state) {
+  const visible = (state.agents || []).filter((agent) => agent.id && agent.status !== 'IDLE'
+    && (providerFilter === 'all' || String(agent.provider || '').toLowerCase() === providerFilter));
+  const agents = visible.filter(isBuilder);
+  const attention = visible.filter((agent) => ['STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
+  ui.laneAlert.hidden = !attention.length;
+  if (attention.length) {
+    const first = attention[0];
+    setText(ui.laneAlertText, attention.length === 1
+      ? `${first.title || first.line} · ${AGENT_MARKS[first.status] || first.status}`
+      : `${attention.length} assignments need attention`);
+  }
+  if (!agents.length) {
+    ui.lanes.replaceChildren(node('p', 'empty', 'No assignment lanes match this view'));
+    return;
+  }
+  ui.lanes.replaceChildren(...agents.map((agent) => {
+    const row = node('button', 'lane-row');
+    row.type = 'button';
+    row.addEventListener('click', () => showDetail(agent.id));
+    const identity = node('span', 'lane-identity');
+    identity.appendChild(node('strong', null, agent.title || agent.line));
+    identity.appendChild(node('small', null, `${String(agent.role || 'agent').toLowerCase()} instance`));
+    row.appendChild(identity);
+    row.appendChild(node('span', 'lane-branch', agent.branch || 'No branch'));
+    const runtime = node('span', 'lane-runtime');
+    runtime.appendChild(node('strong', null, agent.provider || 'Unassigned provider'));
+    runtime.appendChild(node('small', null, [agent.model, agent.effort].filter(Boolean).join(' · ')));
+    row.appendChild(runtime);
+    const status = node('span', 'lane-status', AGENT_MARKS[agent.status] || agent.status);
+    status.dataset.status = agent.status;
+    row.appendChild(status);
+    row.appendChild(node('span', 'lane-arrow', '›'));
+    return row;
+  }));
+}
+
+function renderReleaseGate(state) {
+  const builders = (state.agents || []).filter((agent) => agent.id && isBuilder(agent));
+  ui.releaseGate.hidden = !builders.length;
+  if (!builders.length) return;
+  const reviewed = builders.filter((agent) => REVIEWED.has(agent.job_status)
+    || agent.review_policy === 'none').length;
+  setText(ui.gateProgress, `${reviewed} / ${builders.length} candidates cleared`);
+}
+
+const ROLE_COPY = {
+  supervisor: 'Coordinates the workflow and dispatches bounded work.',
+  planner: 'Turns goals into a dependency-aware execution plan.',
+  architect: 'Defines boundaries and technical direction before implementation.',
+  build: 'Implements a scoped change in an isolated worktree.',
+  reviewer: 'Checks a candidate independently and returns a verdict.',
+  specialist: 'Reviews a focused technical or domain concern.',
+  security: 'Audits security-sensitive behavior and evidence.',
+  benchmark: 'Measures behavior against a controlled baseline.',
+  evaluator: 'Evaluates outcomes after verification.',
+  researcher: 'Collects external or repository evidence for a decision.',
+  investigator: 'Traces current behavior without changing the tree.',
+  qa: 'Verifies acceptance behavior and regressions.',
+  landing: 'Integrates an approved candidate into the target branch.',
+  freeze: 'Records an approved artifact as authoritative.',
+  operator: 'Performs bounded operational verification.',
+};
+
+function libraryCard(profile) {
+  const card = node('article', 'library-card');
+  const head = node('div', 'library-card-head');
+  head.appendChild(node('span', 'agent-glyph', profile.provider === 'codex' ? '›_' : '✳'));
+  const title = node('span');
+  title.appendChild(node('strong', null, profile.role));
+  title.appendChild(node('small', null, ROLE_COPY[profile.role] || 'Reusable workflow role.'));
+  head.appendChild(title);
+  const count = node('span', 'instance-count', profile.instances
+    ? `${profile.instances} live` : 'Available');
+  head.appendChild(count);
+  card.appendChild(head);
+  const facts = node('div', 'library-facts');
+  facts.appendChild(node('span', null, profile.provider || 'Policy provider'));
+  facts.appendChild(node('span', null, profile.model || 'Policy model'));
+  facts.appendChild(node('span', null, `${profile.effort || 'default'} thinking`));
+  facts.appendChild(node('span', null, profile.access));
+  if (profile.source) facts.appendChild(node('span', null, profile.source));
+  card.appendChild(facts);
+  return card;
+}
+
+function showLibrary(kind) {
+  const assignments = kind === 'assignments';
+  setText(ui.libraryKicker, assignments ? 'Current workflow' : 'Reusable profiles');
+  setText(ui.libraryTitle, assignments ? 'Agent assignments' : 'Agent library');
+  setText(ui.libraryCopy, assignments
+    ? 'Each row is a separate agent instance with its own task and runtime settings.'
+    : 'Roles define how agents work. Live assignments are separate instances of these reusable profiles.');
+  if (assignments) {
+    const profiles = (lastState.agents || []).filter((agent) => agent.id).map((agent) => ({
+      role: agent.role, provider: agent.provider, model: agent.model, effort: agent.effort,
+      access: agent.branch || 'No branch', instances: 1,
+    }));
+    ui.libraryList.replaceChildren(...profiles.map(libraryCard));
+  } else {
+    ui.libraryList.replaceChildren(...(lastState.agent_library || []).map(libraryCard));
+  }
+  if (typeof ui.library.showModal === 'function') ui.library.showModal();
+  else ui.library.setAttribute('open', '');
+}
+
+function closeLibrary() {
+  if (ui.library.open && typeof ui.library.close === 'function') ui.library.close();
+  else ui.library.removeAttribute('open');
 }
 
 const wireNodes = new Map();
@@ -681,7 +830,10 @@ async function tick() {
     renderProjects(state);
     renderHeader(state);
     renderPipeline(state);
+    renderProviderFilter(state);
     renderGraph(state);
+    renderLanes(state);
+    renderReleaseGate(state);
     showError('');
   } catch (error) {
     showError('dashboard: ' + error.message);
@@ -705,6 +857,7 @@ function resetForProject() {
   wireNodes.clear();
   stageNodes.clear();
   hotKey = null;
+  providerFilter = 'all';
   lastState = { agents: [] };
 }
 
@@ -746,9 +899,22 @@ ui.filters.addEventListener('click', (event) => {
 });
 
 ui.more.addEventListener('click', () => loadActivity(false).catch((e) => showError(e.message)));
+ui.providerFilter.addEventListener('change', () => {
+  providerFilter = ui.providerFilter.value;
+  renderGraph(lastState);
+  renderLanes(lastState);
+});
+el('agent-library-open').addEventListener('click', () => showLibrary('profiles'));
+el('assignments-open').addEventListener('click', () => showLibrary('assignments'));
+el('library-close').addEventListener('click', closeLibrary);
+el('library-done').addEventListener('click', closeLibrary);
+el('current-workflow-link').addEventListener('click', () => selectView('graph'));
 el('detail-close').addEventListener('click', closeDetail);
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && ui.projectList.hidden) closeDetail();
+  if (event.key === 'Escape' && ui.projectList.hidden) {
+    closeDetail();
+    closeLibrary();
+  }
 });
 window.addEventListener('resize', () => drawWires(lastState));
 
@@ -761,7 +927,8 @@ function selectView(view) {
     button.setAttribute('aria-selected', selected ? 'true' : 'false');
   });
   document.querySelectorAll('.nav-item').forEach((button) => {
-    const selected = button.dataset.section === (view === 'activity' ? 'activity' : 'workflow');
+    const selected = button.dataset.section !== 'agents'
+      && button.dataset.section === (view === 'activity' ? 'activity' : 'workflow');
     button.classList.toggle('on', selected);
     if (selected) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
@@ -773,6 +940,7 @@ document.querySelectorAll('.view-tab').forEach((button) => {
   button.addEventListener('click', () => selectView(button.dataset.view));
 });
 document.querySelectorAll('.nav-item').forEach((button) => {
+  if (button.dataset.section === 'agents') return;
   button.addEventListener('click', () => selectView(button.dataset.section === 'activity' ? 'activity' : 'graph'));
 });
 
