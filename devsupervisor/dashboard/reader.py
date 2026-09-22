@@ -347,8 +347,10 @@ class Reader:
             "status": status,
             "job_status": job["status"],
             "line": line,
-            "title": summary.truncate(
-                (job.get("metadata") or {}).get("title") or line, 80),
+            # The card already names the state directly above this line. Keep
+            # its headline about the work itself, so a stalled card does not
+            # waste both visible lines repeating "Stalled, no lease holder".
+            "title": summary.truncate(summary.subject_of(job), 80),
             "provider": (run or {}).get("provider") or job["provider"],
             "model": (run or {}).get("model_resolved") or job["model"],
             "effort": (run or {}).get("effort") or job["effort"],

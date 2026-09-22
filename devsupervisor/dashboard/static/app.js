@@ -302,7 +302,10 @@ function workerNode(agent, builderNumber, handoffLine) {
     box.appendChild(state);
     box.appendChild(node('div', 'line'));
     const runtime = node('div', 'runtime');
-    runtime.appendChild(node('span', 'provider'));
+    const runtimeAgent = node('span', 'runtime-agent');
+    runtimeAgent.appendChild(node('span', 'provider'));
+    runtimeAgent.appendChild(node('span', 'model'));
+    runtime.appendChild(runtimeAgent);
     runtime.appendChild(node('span', 'effort'));
     box.appendChild(runtime);
     box.appendChild(node('div', 'branch'));
@@ -326,7 +329,8 @@ function workerNode(agent, builderNumber, handoffLine) {
   setText(line, agent.title || agent.line || '');
   if (line.title !== (agent.line || '')) line.title = agent.line || '';
   const runtime = box.querySelector('.runtime');
-  setText(runtime.querySelector('.provider'), agent.provider || agent.model || '');
+  setText(runtime.querySelector('.provider'), agent.provider || '');
+  setText(runtime.querySelector('.model'), agent.model || '');
   setText(runtime.querySelector('.effort'), agent.effort ? `${agent.effort} thinking` : '');
   runtime.hidden = !(agent.provider || agent.model || agent.effort);
   const branch = box.querySelector('.branch');
@@ -367,6 +371,7 @@ function renderGraph(state) {
     elements.push(emptyBox);
   }
   reconcile(ui.workers, elements);
+  setData(ui.graph, 'layout', active.length ? 'workers' : 'solo');
   reconcile(ui.attention, attentionElements);
   ui.attentionSection.hidden = !attentionElements.length;
   setText(ui.workingCount, active.filter((agent) => agent.status === 'ACTIVE').length);

@@ -144,6 +144,13 @@ class StatusMappingTests(DashboardTestCase):
         self.assertEqual(agent["effort"], "high")
         self.assertEqual(agent["review_policy"], "independent")
 
+    def test_a_node_title_names_the_work_without_repeating_its_state(self):
+        project = self.make_project()
+        job = self.running_job(project, subject="refresh auth tokens")
+        agent = _agent(self.reader().state(project["id"]), job["id"])
+        self.assertEqual(agent["title"], "refresh auth tokens")
+        self.assertNotEqual(agent["title"], agent["line"])
+
     def test_a_node_without_a_branch_says_so(self):
         project = self.make_project()
         job = self.running_job(project)
