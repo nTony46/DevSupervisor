@@ -1191,3 +1191,85 @@ class LiveEditingTests(DashboardTestCase):
         self.assertEqual(detail['provider'], 'codex')
         self.assertEqual(detail['acceptance_criteria'], ['Tests pass'])
         self.assertNotIn('session_id', detail)
+
+
+class ClaudeObservationTests(DashboardTestCase):
+    def setUp(self):
+        super().setUp()
+        from devsupervisor.dashboard.claude_activity import ClaudeActivity
+        self.project = self.make_project('observed')
+        self.goal = self.make_goal(self.project, title='Current campaign')
+        self.job = self.make_job(self.project, self.goal, subject='external-builder')
+        self.observer = ClaudeActivity(self.home / 'claude-projects')
+        import re
+        directory = self.observer.root / re.sub(r'[^a-zA-Z0-9-]', '-', self.project['repo_path']) / 'session' / 'subagents'
+        directory.mkdir(parents=True)
+        self.transcript = directory / 'agent-test.jsonl'
+
+    def write_transcript(self, age=0, stop='tool_use', prompt=None, cwd=None):
+        rows = [
+            {'type': 'user', 'cwd': cwd or self.project['repo_path'],
+             'timestamp': clock.iso(clock.now() - timedelta(seconds=300)),
+             'message': {'content': prompt or '/prompts/' + self.job['id'] + '.md'}},
+            {'type': 'assistant', 'timestamp': clock.iso(clock.now() - timedelta(seconds=age)),
+             'message': {'model': 'recorded-model', 'stop_reason': stop,
+                         'content': [{'type': 'text', 'text': 'private transcript content'}]}},
+        ]
+        self.transcript.write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
+
+    def test_external_activity_is_visible_without_changing_the_job(self):
+        self.write_transcript()
+        reader = self.reader()
+        reader.claude_activity = self.observer
+        before = list(self.store.conn.iterdump())
+        state = reader.state(self.project['id'])
+        agent = _agent(state, self.job['id'])
+        self.assertEqual(agent['status'], summary.AGENT_ACTIVE)
+        self.assertEqual(agent['job_status'], machine.PLANNED)
+        self.assertEqual(agent['provider'], 'claude-cli')
+        self.assertEqual(state['active_count'], 1)
+        self.assertEqual(state['leases'], 0)
+        self.assertIn('tracked outside scheduler', agent['line'])
+        self.assertNotIn('private transcript content', json.dumps(state))
+        self.assertEqual(list(self.store.conn.iterdump()), before)
+
+    def test_stale_running_reviewer_cannot_select_an_old_campaign(self):
+        old_goal = self.make_goal(self.project, title='Abandoned campaign')
+        stranded = self.running_job(self.project, old_goal, role='reviewer', subject='old')
+        self.store.conn.execute('UPDATE jobs SET updated_at=? WHERE id=?',
+                               (clock.iso(clock.now() - timedelta(days=3)), stranded['id']))
+        state = self.reader().state(self.project['id'])
+        self.assertEqual(state['goal']['id'], self.goal['id'])
+
+    def test_observed_work_wins_over_an_unrelated_newer_planned_job(self):
+        self.write_transcript()
+        other = self.make_goal(self.project, title='Future campaign')
+        self.make_job(self.project, other, subject='future')
+        reader = self.reader()
+        reader.claude_activity = self.observer
+        self.assertEqual(reader.state(self.project['id'])['goal']['id'], self.goal['id'])
+        self.assertNotIn(self.job['id'], [a['id'] for a in reader.state(self.project['id'], other['id'])['agents']])
+
+    def test_finished_turn_is_not_reported_as_working(self):
+        self.write_transcript(stop='end_turn')
+        evidence = self.observer.observe(self.project['repo_path'], [self.job['id']])
+        self.assertEqual(evidence[self.job['id']]['status'], 'COMPLETE')
+
+    def test_old_activity_is_not_reported_as_working(self):
+        self.write_transcript(age=1800)
+        evidence = self.observer.observe(self.project['repo_path'], [self.job['id']])
+        self.assertEqual(evidence[self.job['id']]['status'], 'STALE')
+
+    def test_mentioning_another_job_is_not_an_assignment(self):
+        self.write_transcript(prompt='Review the output of ' + self.job['id'])
+        self.assertEqual(self.observer.observe(self.project['repo_path'], [self.job['id']]), {})
+
+    def test_another_repository_cannot_supply_live_status(self):
+        self.write_transcript(cwd='/somewhere/else')
+        self.assertEqual(self.observer.observe(self.project['repo_path'], [self.job['id']]), {})
+
+    def test_partial_append_does_not_hide_valid_activity(self):
+        self.write_transcript()
+        with self.transcript.open('a') as stream:
+            stream.write('{"type":')
+        self.assertEqual(self.observer.observe(self.project['repo_path'], [self.job['id']])[self.job['id']]['status'], 'ACTIVE')

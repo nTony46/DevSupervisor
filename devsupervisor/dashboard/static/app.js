@@ -1024,8 +1024,9 @@ async function showDetail(jobId) {
     const agent = (lastState.agents || []).find(a => a.id === selectedJob);
     ui.detailRole.textContent = 'Task inspector';
     ui.detailTitle.textContent = detail.title || (agent && agent.title) || detail.summary || detail.id;
-    ui.detailState.textContent = agent && agent.status === 'STALE' ? 'STALLED · no active lease' : detail.state || '';
-    ui.detailState.dataset.tone = agent && agent.status === 'STALE' ? 'hold' : STATE_TONES[detail.state] || '';
+    const observation = agent && agent.observation;
+    ui.detailState.textContent = observation ? (observation.status === 'ACTIVE' ? 'RECENT CLAUDE ACTIVITY' : observation.status === 'COMPLETE' ? 'CLAUDE TURN FINISHED' : 'CLAUDE ACTIVITY STALE') : agent && agent.status === 'STALE' ? 'STALLED · no active lease' : detail.state || '';
+    ui.detailState.dataset.tone = observation ? (observation.status === 'ACTIVE' ? 'signal' : observation.status === 'COMPLETE' ? 'landed' : 'hold') : agent && agent.status === 'STALE' ? 'hold' : STATE_TONES[detail.state] || '';
     ui.detailBody.replaceChildren();
     function section(title, fields) {
       const present = fields.filter(([, value]) => value !== null && value !== undefined && value !== '');
@@ -1037,7 +1038,7 @@ async function showDetail(jobId) {
       });
     }
     const assigned = node('dd', 'inspector-agent');
-    const label = node('span'); label.append(node('strong', null, roleName(detail.role)), node('small', null, `${providerName(detail.provider)} · ${detail.effort || 'Default'} thinking`));
+    const label = node('span'); label.append(node('strong', null, roleName(detail.role)), node('small', null, `${providerName((observation && observation.provider) || detail.provider)} · ${detail.effort || 'Default'} thinking`));
     const configure = node('button', 'secondary-action', 'Configure'); configure.type = 'button';
     configure.title = 'Configure a reusable profile; this assignment stays unchanged';
     configure.addEventListener('click', () => {
@@ -1045,9 +1046,10 @@ async function showDetail(jobId) {
       showProfile((lastState.agent_library || []).find(p => p.id === 'preset-' + role) || {role});
     });
     assigned.append(label, configure); ui.detailBody.appendChild(assigned);
+    section('Activity source', observation ? [['Source', observation.source], ['Last observed', localMoment(observation.last_seen)], ['Ledger state', detail.state], ['Tracking', 'Read-only observation; no scheduler lease.']] : []);
     section('Assigned agent', [
-      ['Role', roleName(detail.role)], ['Provider', detail.provider || 'Not recorded'],
-      ['Model', detail.model], ['Thinking', detail.effort], ['Attempt', detail.attempt],
+      ['Role', roleName(detail.role)], ['Provider', (observation && observation.provider) || detail.provider || 'Not recorded'],
+      ['Model', (observation && observation.model) || detail.model], ['Thinking', detail.effort], ['Attempt', detail.attempt],
     ]);
     section('Task instructions', [['Instructions', detail.instructions || 'No task instructions recorded.']]);
     section('Expected output', (detail.acceptance_criteria || []).map((item, i) => [`Criterion ${i + 1}`, typeof item === 'string' ? item : JSON.stringify(item)]));

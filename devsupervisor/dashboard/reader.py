@@ -4,8 +4,8 @@ The dashboard observes the supervisor; it never becomes another actor in the
 system. The connection is opened `mode=ro` with `query_only` set, so a coding
 mistake here fails loudly instead of writing to authoritative state.
 
-Nothing is cached in server memory that could not be rebuilt from SQLite on the
-next request, which is what makes history survive a restart for free.
+SQLite remains authoritative for jobs. Optional Claude transcript observations
+add clearly attributed activity evidence without rewriting execution records.
 """
 
 import json
@@ -19,6 +19,7 @@ from ..errors import DevSupervisorError
 from ..policy import permissions, routing, tools as tool_policy
 from ..state import machine
 from . import summary
+from .claude_activity import ClaudeActivity
 
 RECENT_COMPLETE_SECONDS = 900
 # How long a parked job keeps a node in the live graph once it stops moving.
@@ -111,6 +112,7 @@ class Reader:
             self.conn.execute("SELECT 1 FROM projects LIMIT 1")
         except sqlite3.Error as exc:
             raise StateUnavailable(f"cannot read {self.db_path}: {exc}") from exc
+        self.claude_activity = ClaudeActivity()
         self._git_cache = {}
         self._git_inflight = {}
         # Guards the connection only. Git runs outside it: six subprocesses with
@@ -188,18 +190,20 @@ class Reader:
         jobs = self._jobs("SELECT * FROM jobs WHERE project_id = ? ORDER BY updated_at DESC",
                           (project_id,))
         gates = self._open_gates(project_id)
-        goal, scope_jobs = self._current_scope(jobs)
+        leases = self._active_leases(project_id)
+        observed = self.claude_activity.observe(project['repo_path'],
+                    [j['id'] for j in jobs if j['status'] not in machine.TERMINAL])
+        goal, scope_jobs = self._current_scope(jobs, leases, observed)
         if workflow:
             goal = self.workflow(project_id, workflow) if workflow != 'unscoped' else None
             jobs = [job for job in jobs if (job['goal_id'] or 'unscoped') == workflow]
             scope_jobs = jobs
             job_ids = {job['id'] for job in jobs}
             gates = [gate for gate in gates if gate.get('job_id') in job_ids or gate.get('goal_id') == workflow]
-        leases = self._active_leases(project_id)
         if workflow:
             leases = [lease for lease in leases if lease in {j["id"] for j in jobs}]
         agents, counts = self._agents(project_id, jobs, {job["id"] for job in scope_jobs},
-                                      live_leases=leases, historical=bool(workflow))
+                                      live_leases=leases, historical=bool(workflow), observed=observed)
         lock = self._one("SELECT * FROM supervisor_lock WHERE id = 1")
         if workflow and not counts["active"]:
             lock = None
@@ -223,7 +227,7 @@ class Reader:
             "generated_at": clock.now_iso(),
         }
 
-    def _current_scope(self, jobs):
+    def _current_scope(self, jobs, leases=(), observed=None):
         """The goal the supervisor is working on now, and the jobs under it.
 
         Jobs are ordered newest-first. A job left BLOCKED months ago is not
@@ -232,7 +236,12 @@ class Reader:
         """
         closed = self._closed_goal_ids()
         live = [job for job in jobs if job["status"] not in machine.TERMINAL]
-        anchor = next((job for job in live if job["status"] in machine.ACTIVE), None)
+        observed = observed or {}
+        now = clock.now()
+        anchor = next((job for job in live if job['id'] in leases
+                       or observed.get(job['id'], {}).get('status') == summary.AGENT_ACTIVE), None)
+        anchor = anchor or next((job for job in live if job["status"] in machine.ACTIVE
+                                 and self._status_for(job, now, set(leases)) == summary.AGENT_ACTIVE), None)
         anchor = anchor or next(
             (job for job in live if job["goal_id"] not in closed), None)
         anchor = anchor or (jobs[0] if jobs else None)
@@ -292,7 +301,7 @@ class Reader:
 
     # --- agents -----------------------------------------------------------
 
-    def _agents(self, project_id, jobs, scope_ids=(), live_leases=(), historical=False):
+    def _agents(self, project_id, jobs, scope_ids=(), live_leases=(), historical=False, observed=None):
         """Real jobs first; then the roles this project uses, greyed out.
 
         An idle node is role capacity, not a fabricated agent: it carries no job
@@ -305,9 +314,13 @@ class Reader:
         now = clock.now()
         scope_ids = set(scope_ids)
         leased = set(live_leases)
+        observed = observed or {}
         nodes, busy = [], set()
         for job in jobs:
             status = self._status_for(job, now, leased)
+            evidence = observed.get(job['id']) if job['id'] not in leased else None
+            if evidence and job['status'] not in machine.TERMINAL:
+                status = evidence['status']
             if historical and job["status"] == machine.DONE:
                 status = summary.AGENT_COMPLETE
             if status == summary.AGENT_IDLE:
@@ -318,7 +331,17 @@ class Reader:
             # past the display cap: otherwise the graph would offer it as free
             # capacity while three of its jobs are running.
             busy.add(job["role"])
-            nodes.append(self._agent_node(job, status, now))
+            agent = self._agent_node(job, status, now)
+            if evidence:
+                agent['observation'] = evidence
+                agent['provider'] = evidence['provider']
+                agent['model'] = evidence['model'] or agent['model']
+                agent['line'] = {summary.AGENT_ACTIVE: 'Recent Claude activity · tracked outside scheduler',
+                                 summary.AGENT_COMPLETE: 'Claude turn finished · ledger not yet updated',
+                                 summary.AGENT_STALE: 'Claude activity is stale · execution unconfirmed'}[status]
+                if status == summary.AGENT_ACTIVE and evidence.get('started_at'):
+                    agent['elapsed_s'] = max(0, int((now - clock.parse(evidence['started_at'])).total_seconds()))
+            nodes.append(agent)
         nodes.sort(key=_node_order)
         shown = nodes[:MAX_AGENT_NODES]
         hidden_jobs = len(nodes) - len(shown)

@@ -74,6 +74,14 @@ jobs, leases, sessions, or routing policy. Profiles are available through the
 local `/api/profiles` endpoint for explicit reuse; the scheduler does not
 implicitly adopt them. Saving a profile does not launch an agent.
 
+Claude subagents launched outside the scheduler can also appear in the live graph
+when their initial prompt references an existing job's `/prompts/<job-id>.md`
+and the transcript belongs to the registered repository. The inspector labels
+this source separately from the recorded ledger state. Recent transcript activity
+is evidence of activity, not a scheduler lease: it expires after 15 minutes without
+an update, and a finished Claude turn is no longer counted as working. Transcript
+contents are not returned by the API; no job or session records are rewritten.
+
 ## Project rules: policy packs
 
 Rules specific to one repository — protected paths, a required verification
