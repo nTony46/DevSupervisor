@@ -5,7 +5,10 @@ hands each piece to a disposable agent, has an independent reviewer check the
 result, lands what passes, and stops for you when a decision is genuinely
 yours. State lives in SQLite, not in the conversation.
 
-![The live agent graph: the supervisor at the top, workers below it, live edges lit](docs/images/dashboard-graph.png)
+![DevSupervisor dashboard with workflow navigation, parallel builders, completed work, an active independent review, and the task inspector](docs/images/dashboard-graph.png)
+
+*Example workflow with fictional demo data: completed work, active builders,
+and an independent review in progress.*
 
 ## Quick start
 
@@ -61,18 +64,18 @@ Also: `devsup pause|resume`, `devsup memory list|curate|adopt`,
 devsup dashboard        # http://127.0.0.1:8765
 ```
 
-Loopback only. Pipeline, live agent graph, activity log, gates, and spend read
-execution state without modifying it. Workflows lists goals across all projects;
-select one to inspect its assignments, or use the project selector for current work.
+Browse workflows across projects, rename them, and follow parallel builders and
+review handoffs. Filter assignments by provider; select an agent to inspect its
+task, instructions, validation criteria, and recorded output. The dashboard runs
+on localhost and reads execution state without modifying it.
 
 Agent Library supports creating and updating reusable profiles (name, role,
-provider, model, thinking, and instructions). Workflow names are editable display
-labels; the original task objective is preserved. These edits are versioned in
-`supervisor.dashboard.sqlite3` beside the execution database, survive restarts,
-and reject conflicting saves from another window. They never change existing
-jobs, leases, sessions, or routing policy. Profiles are available through the
-local `/api/profiles` endpoint for explicit reuse; the scheduler does not
-implicitly adopt them. Saving a profile does not launch an agent.
+provider, model, thinking, and instructions). Profiles are saved templates:
+their instructions are not automatically applied to new or existing agents.
+Saving a profile does not launch an agent or change routing policy. Profile edits
+and workflow display names persist separately in `supervisor.dashboard.sqlite3`,
+with version checks to prevent conflicting saves. Original task objectives and
+running sessions stay unchanged.
 
 Claude subagents launched outside the scheduler can also appear in the live graph
 when their initial prompt references an existing job's `/prompts/<job-id>.md`
@@ -177,7 +180,7 @@ templates/     the instructions `devsup claude-md` / `agents-md` install
 Everything durable lives under `$DEVSUPERVISOR_HOME` (default
 `~/.devsupervisor`); point it at a temp directory for an isolated instance.
 
-`./scripts/test.sh` — 423 tests, no network, no paid calls.
+`./scripts/test.sh` — full test suite, no network, no paid calls.
 
 Local, single machine, one supervisor loop at a time. Providers: `mock` and
 `claude-cli` (needs `claude` on `PATH`). Runs from a checkout; no package yet.
