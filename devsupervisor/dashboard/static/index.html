@@ -61,7 +61,7 @@
       </button>
     </div>
     <div class="sidebar-spacer"></div>
-    <div class="read-only-note"><span class="dot"></span><div><strong>Live observer</strong><small>Read-only durable state</small></div></div>
+    <div class="read-only-note"><span class="dot"></span><div><strong>Live workspace</strong><small>Existing runs keep their settings</small></div></div>
   </aside>
 
   <div class="app-main" data-view="graph">
@@ -84,6 +84,7 @@
         </div>
       </div>
       <div class="head-actions">
+        <button type="button" class="secondary-action" id="workflow-rename">Rename workflow</button>
         <button type="button" class="secondary-action" id="assignments-open"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>Agent assignments</button>
         <span class="mode-badge"><span class="dot"></span>Live state</span>
       </div>
@@ -96,14 +97,19 @@
     </div>
 
     <main>
+      <section class="workflows-page" id="workflows-page">
+        <div class="library-page-head"><div><p class="eyebrow">ACROSS YOUR PROJECTS</p><h1>Workflows</h1><p>Choose a workflow to inspect its assignments and progress.</p></div></div>
+        <label class="library-search"><span aria-hidden="true">⌕</span><input id="workflow-search" type="search" placeholder="Find a workflow or project…" aria-label="Search workflows"></label>
+        <div id="workflow-list" class="workflow-list"></div>
+      </section>
       <section class="agent-library-page" id="agent-library-page">
         <div class="library-page-head">
-          <div><p class="eyebrow">YOUR TEAM, YOUR DEFAULTS</p><h1>Agent library</h1><p>Reusable roles for every workflow. Inspect how each agent thinks and works.</p></div>
-          <span class="policy-badge">Policy managed</span>
+          <div><p class="eyebrow">YOUR TEAM, YOUR DEFAULTS</p><h1>Agent library</h1><p>Your reusable agent configurations. Choose how each agent thinks and works.</p></div>
+          <button type="button" class="primary-action" id="agent-create">＋ Create agent</button>
         </div>
         <div class="library-toolbar">
           <label class="library-search"><span aria-hidden="true">⌕</span><input type="search" id="library-search" placeholder="Find an agent…" aria-label="Search agent profiles"></label>
-          <span><b id="library-profile-count">0</b> profiles · Effective settings for future assignments</span>
+          <span><b id="library-profile-count">0</b> profiles · Saved profiles · Existing assignments stay unchanged</span>
         </div>
         <div class="agent-profile-grid" id="agent-profile-grid"></div>
       </section>

@@ -1205,3 +1205,45 @@ button { color: inherit; }
  .flow-caption { display: grid; }
  .library-dialog[data-kind="profile"] .dialog-head,.library-dialog[data-kind="profile"] .library-list,.library-dialog[data-kind="profile"] .dialog-foot { padding-left: 18px; padding-right: 18px; }
 }
+
+/* Live library and cross-project navigation share the concept's surfaces. */
+.primary-action { padding: 11px 16px; border: 1px solid var(--signal); border-radius: 6px; background: var(--signal); color: var(--void); font-weight: 600; cursor: pointer; min-height: 42px; }
+.primary-action:hover { filter: brightness(1.1); }
+.workflows-page { display: none; }
+.app-main[data-view="workflows"] .workflows-page { display: block; }
+.app-main[data-view="workflows"] .workflow-head,
+.app-main[data-view="workflows"] .view-tabs,
+.app-main[data-view="workflows"] main > :not(.workflows-page) { display: none; }
+.workflow-list { display: grid; gap: 12px; margin-top: 28px; }
+.workflow-card { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; text-align: left; padding: 24px; border: 1px solid var(--seam-2); border-radius: 8px; background: var(--console); color: var(--ink); cursor: pointer; }
+.workflow-card:hover { border-color: var(--signal); background: var(--deck); }
+.workflow-card > span:first-child { display: grid; gap: 8px; min-width: 0; }
+.workflow-card strong { font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
+.workflow-card small { color: var(--signal); font-size: 12px; }
+.workflow-card span span { color: var(--ink-3); font-size: 13px; line-height: 1.6; }
+.workflow-stats { flex-shrink: 0; font-size: 12px; color: var(--ink-3); }
+.form-error { color: var(--fault); font-size: 13px; line-height: 1.5; margin: 0; }
+.form-error:empty { display: none; }
+.profile-field select { width: 100%; }
+.profile-form textarea { resize: vertical; }
+.library-dialog .dialog-foot button:disabled { opacity: .5; cursor: wait; }
+.inspector-agent { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--seam-2); border-radius: 7px; background: var(--deck); padding: 14px; }
+.inspector-agent strong,.inspector-agent small { display: block; }
+.inspector-agent small { color: var(--ink-3); font-size: 11px; margin-top: 6px; }
+.inspector-agent button { padding: 8px; font-size: 11px; }
+.inspector-output { grid-column: 1 / -1; margin-top: 24px !important; }
+.inspector-output > button { width: 100%; justify-content: center; }
+.artifact-output article { padding: 14px 0; border-bottom: 1px solid var(--seam); }
+.artifact-output p { white-space: pre-wrap; }
+.detail dd { white-space: pre-wrap; }
+@media (min-width: 1400px) {
+  .inspector-open .app-main { margin-right: 380px; }
+  .inspector-open .detail { top: 64px; height: calc(100dvh - 64px); box-shadow: none; }
+}
+@media (max-width: 700px) {
+  .workflow-card { align-items: flex-start; flex-direction: column; gap: 14px; padding: 18px; }
+  .library-page-head .primary-action { margin-top: 20px; }
+}
+.library-dialog[data-kind="profile"] .dialog-foot button { min-height: 42px; padding: 10px 16px; background: var(--signal); border-color: var(--signal); color: var(--void); font-size: 13px; font-weight: 600; }
+.profile-form-note { font-size: 12px; line-height: 1.6; }
+.library-dialog .dialog-foot { font-size: 11px; }

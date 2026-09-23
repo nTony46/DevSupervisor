@@ -1,4 +1,4 @@
-/* DevSupervisor dashboard — read-only.
+/* DevSupervisor dashboard — live state and versioned library settings.
  *
  * Every string that comes from durable state is written with textContent. Job
  * titles, gate questions and blocker notes are operator data, not markup, and
@@ -42,6 +42,11 @@ const ui = {
 };
 
 let project = new URLSearchParams(location.search).get('project') || '';
+let workflow = new URLSearchParams(location.search).get('workflow') || '';
+let contextVersion = 0;
+let workflows = [];
+let workflowSignature = '';
+let editorForm = null;
 let filter = 'all';
 let entries = [];
 let activitySignature = '';
@@ -124,10 +129,9 @@ function renderHeader(state) {
   const spend = state.spend || {};
   fact(ui.spend, typeof spend.project_usd === 'number' ? `$${spend.project_usd.toFixed(2)}` : '');
   const goal = state.goal || {};
-  setText(ui.workflowTitle, goal.title || (state.project && state.project.name) || 'No active workflow');
+  setText(ui.workflowTitle, state.workflow_name || goal.title || (state.project && state.project.name) || 'No active workflow');
   setText(ui.workflowId, goal.id || '');
-  setText(ui.sidebarWorkflowTitle, goal.title || 'No active workflow');
-  setText(ui.workflowCount, goal.id ? 1 : 0);
+  setText(ui.sidebarWorkflowTitle, state.workflow_name || goal.title || 'Project work');
   const active = state.active_count || 0;
   setText(ui.workflowDescription, goal.description || (active
     ? `One workflow coordinator, ${active} active assignment${active === 1 ? '' : 's'}, and explicit review handoffs.`
@@ -179,12 +183,15 @@ function closeMenu(refocus) {
 
 function chooseProject(id) {
   closeMenu(true);
-  if (id === project) return;
+  if (id === project && !workflow) return;
+  workflow = '';
   project = id;
   resetForProject();
   const url = new URL(location.href);
   url.searchParams.set('project', project);
+  url.searchParams.delete('workflow');
   history.replaceState(null, '', url);
+  selectView('graph');
   tick();
   tickActivity();
 }
@@ -380,7 +387,7 @@ function renderGraph(state) {
   reconcile(ui.supervisor, [supervisorNode(state)]);
   const allAgents = state.agents || [];
   const agents = allAgents.filter((agent) => agent.status === 'IDLE' || providerFilter === 'all'
-    || String(agent.provider || '').toLowerCase() === providerFilter);
+    || providerKey(agent.provider) === providerFilter);
   const active = agents.filter((agent) => !['IDLE', 'STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
   const attention = agents.filter((agent) => ['STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
   const idle = agents.filter((agent) => agent.status === 'IDLE');
@@ -446,25 +453,35 @@ function renderGraph(state) {
   requestAnimationFrame(() => drawWires(state));
 }
 
+function providerKey(value) {
+  const key = String(value || '').toLowerCase();
+  if (key.includes('claude')) return 'claude-cli';
+  if (key.includes('codex')) return 'codex';
+  return key || 'unknown';
+}
+
 function renderProviderFilter(state) {
-  const providers = Array.from(new Set((state.agents || [])
-    .map((agent) => agent.provider).filter(Boolean).map((value) => String(value).toLowerCase()))).sort();
-  const options = [node('option', null, 'All providers')];
-  options[0].value = 'all';
-  providers.forEach((provider) => {
-    const option = node('option', null, provider);
-    option.value = provider;
-    options.push(option);
-  });
-  if (providerFilter !== 'all' && !providers.includes(providerFilter)) providerFilter = 'all';
-  ui.providerFilter.replaceChildren(...options);
+  const providers = Array.from(new Set(['claude-cli', 'codex', ...(state.agents || [])
+    .filter(a => a.id).map(a => providerKey(a.provider))]));
+  const signature = providers.join('|');
+  if (ui.providerFilter.dataset.signature !== signature) {
+    const options = [node('option', null, 'All providers')];
+    options[0].value = 'all';
+    providers.forEach(provider => {
+      const option = node('option', null, provider === 'claude-cli' ? 'Claude' : provider === 'codex' ? 'Codex' : provider === 'unknown' ? 'Not recorded' : provider);
+      option.value = provider;
+      options.push(option);
+    });
+    ui.providerFilter.replaceChildren(...options);
+    ui.providerFilter.dataset.signature = signature;
+  }
   ui.providerFilter.value = providerFilter;
-  ui.providerFilter.closest('.provider-filter').hidden = providers.length < 2;
+  ui.providerFilter.closest('.provider-filter').hidden = false;
 }
 
 function renderLanes(state) {
   const visible = (state.agents || []).filter((agent) => agent.id && agent.status !== 'IDLE'
-    && (providerFilter === 'all' || String(agent.provider || '').toLowerCase() === providerFilter));
+    && (providerFilter === 'all' || providerKey(agent.provider) === providerFilter));
   const agents = visible.filter(isBuilder);
   const attention = visible.filter((agent) => ['STALE', 'FAILED', 'BLOCKED', 'WAITING'].includes(agent.status));
   ui.laneAlert.hidden = !attention.length;
@@ -561,6 +578,7 @@ function providerName(provider, model) {
 }
 
 function profileField(labelText, control, className) {
+  control.setAttribute('aria-label', labelText);
   const label = node('label', className || 'profile-field');
   label.appendChild(node('span', null, labelText));
   label.appendChild(control);
@@ -611,13 +629,13 @@ function profileCard(profile) {
   const card = node('button', 'agent-profile-card');
   card.type = 'button';
   card.dataset.provider = profile.provider || 'policy';
-  card.setAttribute('aria-label', `Configure ${roleName(profile.role)}`);
+  card.setAttribute('aria-label', `Configure ${profile.name || roleName(profile.role)}`);
   card.addEventListener('click', () => showProfile(profile));
   const top = node('span', 'profile-top');
   top.appendChild(node('span', 'agent-glyph', profile.provider === 'codex' ? '›_' : '✳'));
-  top.appendChild(node('span', 'profile-badge', profile.instances ? `${profile.instances} live` : 'Preset'));
+  top.appendChild(node('span', 'profile-badge', profile.revision ? `v${profile.revision}` : 'Preset'));
   card.appendChild(top);
-  card.appendChild(node('strong', 'profile-name', roleName(profile.role)));
+  card.appendChild(node('strong', 'profile-name', profile.name || roleName(profile.role)));
   card.appendChild(node('span', 'profile-copy', ROLE_COPY[profile.role] || 'Reusable workflow role.'));
   const footer = node('span', 'profile-footer');
   const settings = [profile.provider || 'Policy provider', profile.model,
@@ -634,7 +652,7 @@ function renderAgentLibrary(state) {
   const signature = JSON.stringify([profiles, query]);
   if (signature === librarySignature) return;
   librarySignature = signature;
-  const shown = profiles.filter((profile) => [profile.role, roleName(profile.role), profile.provider, profile.model,
+  const shown = profiles.filter((profile) => [profile.name, profile.role, roleName(profile.role), profile.provider, profile.model,
     profile.effort, profile.access, ROLE_COPY[profile.role]].filter(Boolean).join(' ').toLowerCase().includes(query));
   setText(ui.libraryProfileCount, profiles.length);
   if (!shown.length) {
@@ -644,39 +662,97 @@ function renderAgentLibrary(state) {
   ui.agentProfileGrid.replaceChildren(...shown.map(profileCard));
 }
 
-function showProfile(profile) {
+function editableInput(value, limit) {
+  const input = node('input'); input.value = value || ''; input.maxLength = limit;
+  return input;
+}
+function selectInput(values, current) {
+  const select = node('select');
+  values.forEach(([value, label]) => { const option = node('option', null, label); option.value = value; select.appendChild(option); });
+  select.value = current;
+  return select;
+}
+async function saveJSON(path, payload) {
+  const settings = await getJSON('/api/settings');
+  const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Dashboard-Token': settings.token}, body: JSON.stringify(payload)});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not save');
+  return data;
+}
+function openEditor(title, form, save) {
   ui.library.dataset.kind = 'profile';
-  setText(ui.libraryKicker, 'Agent profile');
-  setText(ui.libraryTitle, `Configure ${roleName(profile.role)}`);
-  setText(ui.libraryCopy, '');
-  setText(ui.libraryFootnote, 'Live observer · Profile changes are not written by this dashboard.');
-  setText(ui.libraryDone, 'Close');
-
-  const form = node('form', 'profile-form');
-  form.addEventListener('submit', (event) => event.preventDefault());
-  form.appendChild(profileField('Agent name', readonlyInput(roleName(profile.role))));
-  const row = node('div', 'profile-field-row');
-  row.appendChild(profileField('Provider', readonlySelect(providerName(profile.provider, profile.model))));
-  row.appendChild(profileField('Thinking', readonlySelect(
-    String(profile.effort || 'Default').replace(/^./, (letter) => letter.toUpperCase()))));
-  form.appendChild(row);
-  form.appendChild(profileField('Model', readonlySelect(profile.model || 'Default reasoning model')));
-  const instructions = node('textarea');
-  instructions.rows = 4;
-  instructions.value = ROLE_INSTRUCTIONS[profile.role] || ROLE_COPY[profile.role] || 'Reusable workflow role.';
-  instructions.readOnly = true;
-  instructions.tabIndex = -1;
-  form.appendChild(profileField('Role guidance', instructions));
-  form.appendChild(node('p', 'profile-form-note',
-    `Effective ${profile.source || 'policy'} · ${profile.access || 'policy access'} · ${profile.instances || 0} live instance${profile.instances === 1 ? '' : 's'}.`));
-  form.appendChild(node('p', 'profile-form-safety',
-    'Role guidance describes the role; it is not the saved prompt. Each assignment retains its recorded model, task, and execution state.'));
+  setText(ui.libraryTitle, title); setText(ui.libraryCopy, '');
+  setText(ui.libraryFootnote, 'Existing jobs and sessions keep their recorded settings.');
+  setText(ui.libraryDone, 'Save'); ui.libraryDone.disabled = false;
+  editorForm = form;
+  const error = node('p', 'form-error'); error.setAttribute('role', 'alert');
+  form.appendChild(error);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); ui.libraryDone.disabled = true; error.textContent = '';
+    try { await save(); closeLibrary(); await tick(); await refreshWorkflows(); }
+    catch (e) { error.textContent = e.message; }
+    finally { ui.libraryDone.disabled = false; }
+  });
   ui.libraryList.replaceChildren(form);
-  if (typeof ui.library.showModal === 'function') ui.library.showModal();
-  else ui.library.setAttribute('open', '');
+  if (!ui.library.open) ui.library.showModal();
+}
+function showProfile(profile = {}) {
+  const form = node('form', 'profile-form');
+  const name = editableInput(profile.name || (profile.role ? roleName(profile.role) : ''), 100); name.required = true;
+  const role = selectInput(Object.keys(ROLE_INSTRUCTIONS).map(r => [r, roleName(r)]), profile.role || 'build');
+  role.disabled = Boolean(profile.id && profile.id.startsWith('preset-'));
+  const provider = selectInput([['policy','Routing policy'], ['claude-cli','Claude'], ['codex','Codex']], profile.provider ? providerKey(profile.provider) : 'policy');
+  if (!provider.value) provider.value = 'policy';
+  const effort = selectInput(['default','low','medium','high','xhigh','max'].map(v => [v, v === 'default' ? 'Provider default' : v.replace(/^./, l => l.toUpperCase())]), profile.effort || 'default');
+  const model = editableInput(profile.model || '', 150); model.placeholder = 'Provider default, or a model ID';
+  const instructions = node('textarea'); instructions.rows = 5; instructions.maxLength = 16000;
+  instructions.value = profile.instructions ?? ROLE_INSTRUCTIONS[profile.role || 'build'] ?? '';
+  form.appendChild(profileField('Agent name', name));
+  form.appendChild(profileField('Role', role));
+  const row = node('div', 'profile-field-row');
+  row.append(profileField('Provider', provider), profileField('Thinking', effort)); form.appendChild(row);
+  form.append(profileField('Model', model), profileField('Agent instructions', instructions));
+  form.appendChild(node('p', 'profile-form-note', 'Use a model ID and thinking level supported by your provider. Profiles are saved for explicit reuse; saving does not change routing policy or dispatch an agent.'));
+  openEditor(profile.id ? `Configure ${profile.name || roleName(profile.role)}` : 'Create agent', form, async () => {
+    await saveJSON('/api/profiles', {id: profile.id, revision: profile.revision || 0, name: name.value, role: role.value, provider: provider.value, effort: effort.value, model: model.value, instructions: instructions.value});
+  });
+}
+function renameWorkflow() {
+  if (!lastState.project) return;
+  const form = node('form', 'profile-form');
+  const name = editableInput(lastState.workflow_name, 160); name.required = true;
+  form.appendChild(profileField('Workflow name', name));
+  form.appendChild(node('p', 'profile-form-note', 'Change the display name across the dashboard. The task objective and running coordinator stay unchanged.'));
+  const payload = {project, workflow: lastState.workflow_id, revision: lastState.name_revision || 0};
+  openEditor('Rename workflow', form, () => saveJSON('/api/workflow-name', {...payload, name: name.value}));
+}
+async function refreshWorkflows() {
+  try {
+    const result = await getJSON('/api/workflows'); workflows = result.workflows;
+    setText(ui.workflowCount, workflows.length); renderWorkflows();
+  } catch (e) { showError(e.message); }
+}
+function renderWorkflows() {
+  const query = el('workflow-search').value.trim().toLowerCase();
+  const signature = JSON.stringify([workflows, query]);
+  if (workflowSignature === signature) return;
+  workflowSignature = signature;
+  const cards = workflows.filter(w => [w.title,w.project_name,w.status].join(' ').toLowerCase().includes(query)).map(w => {
+    const card = node('button', 'workflow-card'); card.type = 'button';
+    const text = node('span'); text.append(node('small', null, w.project_name), node('strong', null, w.title), node('span', null, w.description || 'View assignments and recorded activity'));
+    card.append(text, node('span', 'workflow-stats', `${w.tasks} tasks · ${w.status}  ↗`));
+    card.addEventListener('click', () => {
+      project = w.project_id; workflow = w.id; resetForProject();
+      const url = new URL(location.href); url.searchParams.set('project', project); url.searchParams.set('workflow', workflow);
+      history.pushState(null, '', url); selectView('graph'); tick(); tickActivity();
+    });
+    return card;
+  });
+  el('workflow-list').replaceChildren(...(cards.length ? cards : [node('p','empty','No workflows match this view.')]));
 }
 
 function showLibrary(kind) {
+  editorForm = null;
   const assignments = kind === 'assignments';
   ui.library.dataset.kind = assignments ? 'assignments' : 'profiles';
   setText(ui.libraryKicker, assignments ? 'Current workflow' : 'Reusable profiles');
@@ -700,6 +776,7 @@ function showLibrary(kind) {
 }
 
 function closeLibrary() {
+  editorForm = null;
   if (ui.library.open && typeof ui.library.close === 'function') ui.library.close();
   else ui.library.removeAttribute('open');
 }
@@ -903,8 +980,11 @@ function renderActivity() {
 async function loadActivity(reset) {
   const params = new URLSearchParams({ limit: String(PAGE), kind: filter });
   if (project) params.set('project', project);
+  if (workflow) params.set('workflow', workflow);
+  const version = contextVersion;
   if (!reset && entries.length) params.set('before', entries[entries.length - 1].at);
   const data = await getJSON('/api/activity?' + params.toString());
+  if (version !== contextVersion) return;
   if (reset) {
     const signature = `${filter}:${data.entries.length}:${data.entries[0] ? data.entries[0].at : ''}`;
     if (signature === activitySignature) return;
@@ -942,8 +1022,8 @@ async function showDetail(jobId) {
     if (request !== detailRequest) return;
     selectedJob = detail.id || jobId;
     const agent = (lastState.agents || []).find(a => a.id === selectedJob);
-    ui.detailRole.textContent = `${roleName(detail.role)} instance`;
-    ui.detailTitle.textContent = (agent && agent.title) || detail.summary || detail.id;
+    ui.detailRole.textContent = 'Task inspector';
+    ui.detailTitle.textContent = detail.title || (agent && agent.title) || detail.summary || detail.id;
     ui.detailState.textContent = agent && agent.status === 'STALE' ? 'STALLED · no active lease' : detail.state || '';
     ui.detailState.dataset.tone = agent && agent.status === 'STALE' ? 'hold' : STATE_TONES[detail.state] || '';
     ui.detailBody.replaceChildren();
@@ -956,11 +1036,22 @@ async function showDetail(jobId) {
         ui.detailBody.appendChild(node('dd', null, value));
       });
     }
-    section('Agent configuration', [
-      ['Role', roleName(detail.role)], ['Provider', agent && agent.provider],
+    const assigned = node('dd', 'inspector-agent');
+    const label = node('span'); label.append(node('strong', null, roleName(detail.role)), node('small', null, `${providerName(detail.provider)} · ${detail.effort || 'Default'} thinking`));
+    const configure = node('button', 'secondary-action', 'Configure'); configure.type = 'button';
+    configure.title = 'Configure a reusable profile; this assignment stays unchanged';
+    configure.addEventListener('click', () => {
+      const role = detail.role === 'builder' ? 'build' : detail.role;
+      showProfile((lastState.agent_library || []).find(p => p.id === 'preset-' + role) || {role});
+    });
+    assigned.append(label, configure); ui.detailBody.appendChild(assigned);
+    section('Assigned agent', [
+      ['Role', roleName(detail.role)], ['Provider', detail.provider || 'Not recorded'],
       ['Model', detail.model], ['Thinking', detail.effort], ['Attempt', detail.attempt],
     ]);
-    section('Assigned task', [['Scope', detail.summary], ['Activity', (agent && agent.line) || detail.action], ['Risk', detail.risk]]);
+    section('Task instructions', [['Instructions', detail.instructions || 'No task instructions recorded.']]);
+    section('Expected output', (detail.acceptance_criteria || []).map((item, i) => [`Criterion ${i + 1}`, typeof item === 'string' ? item : JSON.stringify(item)]));
+    section('Task activity', [['Activity', (agent && agent.line) || detail.action], ['Risk', detail.risk]]);
     section('Isolated branch', [['Branch', detail.branch], ['Worktree', detail.worktree],
       ['Base commit', detail.base_sha], ['Candidate', detail.result_sha]]);
     section('Execution record', [['Instance', detail.id], ['Revision', detail.revision],
@@ -968,8 +1059,17 @@ async function showDetail(jobId) {
       ['Cost', detail.cost_usd && detailValue('cost_usd', detail.cost_usd)]]);
     section('Review handoff', [['Reviews', detail.reviews], ['Revision of', detail.revision_of],
       ['Review policy', agent && agent.review_policy]]);
-    section('Recorded artifacts', (detail.artifacts || []).map(a => [a.kind, a.summary]));
+    const output = node('dd', 'inspector-output');
+    const toggle = node('button', 'secondary-action', 'Inspect task output'); toggle.type = 'button'; toggle.setAttribute('aria-expanded', 'false');
+    const artifacts = node('div', 'artifact-output'); artifacts.hidden = true;
+    const records = detail.artifacts || [];
+    if (!records.length) artifacts.appendChild(node('p', null, 'No output has been recorded for this task yet.'));
+    records.forEach(a => { const record = node('article'); record.append(node('strong', null, a.kind), node('p', null, a.summary || 'Artifact recorded without a summary.')); artifacts.appendChild(record); });
+    toggle.addEventListener('click', () => { artifacts.hidden = !artifacts.hidden; toggle.setAttribute('aria-expanded', String(!artifacts.hidden)); });
+    output.append(toggle, artifacts, node('p', 'profile-form-note', 'These are the recorded settings for this assignment. Editing a library profile does not change this run.'));
+    ui.detailBody.appendChild(output);
     ui.detail.hidden = false;
+    document.body.classList.add('inspector-open');
     el('detail-close').focus();
     renderGraph(lastState);
   } catch (error) {
@@ -981,6 +1081,7 @@ function closeDetail() {
   detailRequest += 1;
   if (ui.detail.hidden) return;
   ui.detail.hidden = true;
+  document.body.classList.remove('inspector-open');
   selectedJob = null;
   renderGraph(lastState);
   if (detailTrigger && detailTrigger.isConnected) detailTrigger.focus();
@@ -989,7 +1090,10 @@ function closeDetail() {
 /* --- polling --- */
 async function tick() {
   try {
-    const state = await getJSON('/api/state' + (project ? '?project=' + encodeURIComponent(project) : ''));
+    const version = contextVersion;
+    const params = new URLSearchParams({project, workflow});
+    const state = await getJSON('/api/state?' + params);
+    if (version !== contextVersion) return;
     if (state.project) project = state.project.id;
     lastState = state;
     renderProjects(state);
@@ -1015,6 +1119,9 @@ async function tickActivity() {
 }
 
 function resetForProject() {
+  contextVersion += 1;
+  laneNodes.clear();
+  librarySignature = '';
   closeDetail();
   entries = [];
   activitySignature = '';
@@ -1072,7 +1179,10 @@ ui.providerFilter.addEventListener('change', () => {
 });
 el('assignments-open').addEventListener('click', () => showLibrary('assignments'));
 el('library-close').addEventListener('click', closeLibrary);
-el('library-done').addEventListener('click', closeLibrary);
+el('library-done').addEventListener('click', () => editorForm ? editorForm.requestSubmit() : closeLibrary());
+el('agent-create').addEventListener('click', () => showProfile());
+el('workflow-rename').addEventListener('click', renameWorkflow);
+el('workflow-search').addEventListener('input', renderWorkflows);
 el('current-workflow-link').addEventListener('click', () => selectView('graph'));
 ui.librarySearch.addEventListener('input', () => {
   libraryQuery = ui.librarySearch.value;
@@ -1091,7 +1201,7 @@ function selectView(view) {
   closeDetail();
   const main = document.querySelector('.app-main');
   main.dataset.view = view;
-  setText(ui.crumbSection, view === 'library' ? 'Agent library' : view === 'activity' ? 'Run history' : 'Workflow');
+  setText(ui.crumbSection, view === 'workflows' ? 'Workflows' : view === 'library' ? 'Agent library' : view === 'activity' ? 'Run history' : 'Workflow');
   document.querySelectorAll('.view-tab').forEach((button) => {
     const selected = button.dataset.view === view;
     button.classList.toggle('on', selected);
@@ -1104,6 +1214,7 @@ function selectView(view) {
     if (selected) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
+  if (view === 'workflows') refreshWorkflows();
   if (view === 'graph') requestAnimationFrame(() => drawWires(lastState));
 }
 
@@ -1112,9 +1223,15 @@ document.querySelectorAll('.view-tab').forEach((button) => {
 });
 document.querySelectorAll('.nav-item').forEach((button) => {
   button.addEventListener('click', () => selectView(button.dataset.section === 'agents'
-    ? 'library' : button.dataset.section === 'activity' ? 'activity' : 'graph'));
+    ? 'library' : button.dataset.section === 'activity' ? 'activity' : 'workflows'));
 });
 
+window.addEventListener('popstate', () => {
+  const params = new URLSearchParams(location.search); project = params.get('project') || ''; workflow = params.get('workflow') || '';
+  resetForProject(); selectView('graph'); tick(); tickActivity();
+});
+refreshWorkflows();
+setInterval(refreshWorkflows, 15000);
 tick();
 tickActivity();
 setInterval(tick, STATE_MS);

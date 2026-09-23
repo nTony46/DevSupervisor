@@ -1080,3 +1080,114 @@ def _agent(state, job_id):
         if agent["id"] == job_id:
             return agent
     raise AssertionError(f"{job_id} is not in the graph: {state['agents']}")
+
+
+class LiveEditingTests(DashboardTestCase):
+    def setUp(self):
+        super().setUp()
+        self.project = self.make_project("alpha")
+        self.job = self.running_job(self.project)
+        self.server = build_server(db_path=config.db_path(), port=0)
+        self.addCleanup(self.server.reader.close)
+        self.addCleanup(self.server.server_close)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        host, port = self.server.server_address[:2]
+        self.base = f"http://{host}:{port}"
+    get = HttpTests.get
+
+    def post(self, path, data, token=True, origin=None):
+        headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['X-Dashboard-Token'] = self.get('/api/settings')['token']
+        if origin:
+            headers['Origin'] = origin
+        request = urllib.request.Request(self.base + path, method='POST',
+                                         data=json.dumps(data).encode(), headers=headers)
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read())
+
+    def profile_data(self, **overrides):
+        return dict(name='My builder', role='build', provider='codex', model='custom-model',
+                    effort='high', instructions='Implement with regression coverage.', **overrides)
+
+    def test_profile_create_edit_persist_without_execution_writes(self):
+        from devsupervisor.dashboard.settings import Settings
+        before = list(self.store.conn.iterdump())
+        created = self.post('/api/profiles', self.profile_data())
+        self.assertEqual(created['revision'], 1)
+        changed = self.post('/api/profiles', {**created, 'name': 'Renamed builder', 'effort': 'medium'})
+        self.assertEqual(changed['revision'], 2)
+        reopened = Settings(config.db_path()).all('profile')[created['id']]
+        self.assertEqual(reopened['name'], 'Renamed builder')
+        self.assertEqual(reopened['instructions'], created['instructions'])
+        self.assertIn(changed, self.get('/api/state?project=alpha')['agent_library'])
+        self.assertEqual(list(self.store.conn.iterdump()), before)
+
+    def test_stale_profile_update_is_rejected(self):
+        created = self.post('/api/profiles', self.profile_data())
+        self.post('/api/profiles', {**created, 'name': 'Other window'})
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            self.post('/api/profiles', created)
+        self.assertEqual(error.exception.code, 409)
+        error.exception.close()
+
+    def test_write_requests_require_local_token_and_origin(self):
+        for token, origin in ((False, None), (True, 'https://unrelated.example')):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post('/api/profiles', self.profile_data(), token=token, origin=origin)
+            self.assertEqual(error.exception.code, 403)
+            error.exception.close()
+        self.assertEqual(self.get('/api/profiles')['profiles'], [])
+
+    def test_invalid_profiles_do_not_persist(self):
+        for delta in ({'name': ' '}, {'provider': 'bad'}, {'role': 'unknown'},
+                      {'effort': 'invalid'}, {'model': 'x' * 151}, {'revision': -1}):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.post('/api/profiles', {**self.profile_data(), **delta})
+            self.assertEqual(error.exception.code, 400)
+            error.exception.close()
+        self.assertEqual(self.get('/api/profiles')['profiles'], [])
+
+    def test_all_workflows_and_names_keep_original_objective(self):
+        other = self.make_project('beta')
+        goal = self.make_goal(self.project, title='Original objective')
+        second = self.make_goal(self.project, title='Second workflow')
+        another = self.make_goal(other, title='Another project')
+        before = list(self.store.conn.iterdump())
+        self.post('/api/workflow-name', {'project': 'alpha', 'workflow': goal['id'],
+                                        'revision': 0, 'name': 'My workflow'})
+        rows = self.get('/api/workflows')['workflows']
+        by_id = {row['id']: row for row in rows}
+        self.assertEqual(by_id[goal['id']]['title'], 'My workflow')
+        self.assertIn(second['id'], by_id)
+        self.assertIn(another['id'], by_id)
+        state = self.get('/api/state?project=alpha&workflow=' + goal['id'])
+        self.assertEqual(state['goal']['title'], 'Original objective')
+        self.assertEqual(state['workflow_name'], 'My workflow')
+        self.assertEqual(list(self.store.conn.iterdump()), before)
+
+    def test_selected_workflow_filters_jobs_activity_and_gates(self):
+        a = self.make_goal(self.project, title='First')
+        b = self.make_goal(self.project, title='Second')
+        first = self.running_job(self.project, a, subject='first')
+        second = self.running_job(self.project, b, subject='second')
+        gates.open_gate(self.store, 'destructive', 'First gate?',
+                        project_id=self.project['id'], goal_id=a['id'], job_id=first['id'])
+        gates.open_gate(self.store, 'destructive', 'Second gate?',
+                        project_id=self.project['id'], goal_id=b['id'], job_id=second['id'])
+        query = '?project=alpha&workflow=' + a['id']
+        state = self.get('/api/state' + query)
+        self.assertEqual([a['id'] for a in state['agents'] if a['id']], [first['id']])
+        self.assertEqual(len(state['gates']), 1)
+        activity = self.get('/api/activity' + query)['entries']
+        self.assertTrue(activity)
+        self.assertTrue(all(entry['job_id'] == first['id'] for entry in activity))
+
+    def test_inspector_exposes_full_recorded_task_and_provider(self):
+        job = self.running_job(self.project, subject='inspect', scope='Detailed instruction. ' * 40,
+                               provider='codex', acceptance_criteria=['Tests pass'])
+        detail = self.get('/api/job?id=' + job['id'])
+        self.assertEqual(detail['instructions'], job['scope'])
+        self.assertEqual(detail['provider'], 'codex')
+        self.assertEqual(detail['acceptance_criteria'], ['Tests pass'])
+        self.assertNotIn('session_id', detail)

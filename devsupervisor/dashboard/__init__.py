@@ -1,7 +1,7 @@
-"""Read-only localhost dashboard for DevSupervisor.
+"""Local dashboard with read-only execution state and separate UI settings.
 
-Observes durable state. It never writes, never schedules, and never becomes a
-second source of truth: every number on the page is a query away from SQLite.
+Profiles and workflow display names live in a companion database. Dashboard
+edits never schedule work or modify existing jobs, leases, or routing policy.
 """
 
 from .reader import Reader, StateUnavailable

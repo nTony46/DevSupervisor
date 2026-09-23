@@ -61,9 +61,18 @@ Also: `devsup pause|resume`, `devsup memory list|curate|adopt`,
 devsup dashboard        # http://127.0.0.1:8765
 ```
 
-Read-only, loopback only. Pipeline, live agent graph, activity log, gates,
-spend — all derived from durable state, so it survives restarts. A project
-selector appears once more than one project is registered.
+Loopback only. Pipeline, live agent graph, activity log, gates, and spend read
+execution state without modifying it. Workflows lists goals across all projects;
+select one to inspect its assignments, or use the project selector for current work.
+
+Agent Library supports creating and updating reusable profiles (name, role,
+provider, model, thinking, and instructions). Workflow names are editable display
+labels; the original task objective is preserved. These edits are versioned in
+`supervisor.dashboard.sqlite3` beside the execution database, survive restarts,
+and reject conflicting saves from another window. They never change existing
+jobs, leases, sessions, or routing policy. Profiles are available through the
+local `/api/profiles` endpoint for explicit reuse; the scheduler does not
+implicitly adopt them. Saving a profile does not launch an agent.
 
 ## Project rules: policy packs
 
@@ -146,7 +155,7 @@ devsupervisor/
   planner/     goal → plan DAG, workflow templates, risk
   policy/      immutable rules, learnable policy, project packs
   providers/   agent runtimes (mock, claude-cli)
-  dashboard/   the read-only localhost UI
+  dashboard/   localhost UI; execution reads and separate profile settings
   scheduler.py supervisor.py metrics.py retrospective.py cli.py
 docs/          architecture and the frozen spec
 tests/         acceptance suite (stdlib unittest, no network)

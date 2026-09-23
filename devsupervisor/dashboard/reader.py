@@ -144,6 +144,27 @@ class Reader:
         return [{"id": row["id"], "name": row["name"]}
                 for row in self._rows("SELECT id, name FROM projects ORDER BY name")]
 
+    def workflow(self, project_id, workflow_id):
+        goal = self._one('SELECT id, title, description, status FROM goals '
+                         'WHERE project_id=? AND id=?', (project_id, workflow_id))
+        if not goal:
+            raise StateUnavailable('No such workflow in this project')
+        return goal
+
+    def workflows(self):
+        rows = self._rows('SELECT g.id, g.project_id, p.name AS project_name, g.title, '
+                          'g.description, g.status, g.updated_at, COUNT(j.id) AS tasks '
+                          'FROM goals g JOIN projects p ON p.id=g.project_id '
+                          'LEFT JOIN jobs j ON j.goal_id=g.id GROUP BY g.id '
+                          'ORDER BY g.updated_at DESC')
+        rows += self._rows("SELECT 'unscoped' AS id, p.id AS project_id, p.name AS project_name, "
+                           "p.name || ' · project work' AS title, '' AS description, "
+                           "'PROJECT' AS status, p.created_at AS updated_at, COUNT(j.id) AS tasks "
+                           "FROM projects p LEFT JOIN jobs j ON j.project_id=p.id AND j.goal_id IS NULL "
+                           "GROUP BY p.id HAVING COUNT(j.id)>0 OR NOT EXISTS "
+                           "(SELECT 1 FROM goals g WHERE g.project_id=p.id)")
+        return rows
+
     def resolve_project(self, key=None):
         """A project by id or name; otherwise the one with the newest activity."""
         if key:
@@ -158,7 +179,7 @@ class Reader:
 
     # --- state ------------------------------------------------------------
 
-    def state(self, project_key=None):
+    def state(self, project_key=None, workflow=None):
         project = self.resolve_project(project_key)
         if project is None:
             return {"project": None, "status": "NO ACTIVE RUN", "projects": [],
@@ -168,10 +189,20 @@ class Reader:
                           (project_id,))
         gates = self._open_gates(project_id)
         goal, scope_jobs = self._current_scope(jobs)
+        if workflow:
+            goal = self.workflow(project_id, workflow) if workflow != 'unscoped' else None
+            jobs = [job for job in jobs if (job['goal_id'] or 'unscoped') == workflow]
+            scope_jobs = jobs
+            job_ids = {job['id'] for job in jobs}
+            gates = [gate for gate in gates if gate.get('job_id') in job_ids or gate.get('goal_id') == workflow]
         leases = self._active_leases(project_id)
+        if workflow:
+            leases = [lease for lease in leases if lease in {j["id"] for j in jobs}]
         agents, counts = self._agents(project_id, jobs, {job["id"] for job in scope_jobs},
-                                      live_leases=leases)
+                                      live_leases=leases, historical=bool(workflow))
         lock = self._one("SELECT * FROM supervisor_lock WHERE id = 1")
+        if workflow and not counts["active"]:
+            lock = None
         return {
             "project": {"id": project_id, "name": project["name"],
                         "repo_path": project["repo_path"]},
@@ -261,7 +292,7 @@ class Reader:
 
     # --- agents -----------------------------------------------------------
 
-    def _agents(self, project_id, jobs, scope_ids=(), live_leases=()):
+    def _agents(self, project_id, jobs, scope_ids=(), live_leases=(), historical=False):
         """Real jobs first; then the roles this project uses, greyed out.
 
         An idle node is role capacity, not a fabricated agent: it carries no job
@@ -277,6 +308,8 @@ class Reader:
         nodes, busy = [], set()
         for job in jobs:
             status = self._status_for(job, now, leased)
+            if historical and job["status"] == machine.DONE:
+                status = summary.AGENT_COMPLETE
             if status == summary.AGENT_IDLE:
                 continue
             if status not in _ALWAYS_SHOWN and not self._is_current(job, scope_ids, now):
@@ -453,6 +486,11 @@ class Reader:
         fields = {
             "id": job["id"], "role": job["role"], "state": job["status"],
             "summary": summary.truncate(job["scope"], 240),
+            "instructions": job["scope"],
+            "title": (job.get("metadata") or {}).get("title") or summary.subject_of(job),
+            "acceptance_criteria": json.loads(job.get("acceptance_criteria") or "[]"),
+            "provider": (run or {}).get("provider") or job["provider"],
+            "review_policy": (job.get("metadata") or {}).get("review_policy"),
             "action": summary.action_line(job),
             "job_type": job["job_type"], "risk": job["risk"],
             "branch": job["branch"], "base_sha": _short(job["base_sha"]),
@@ -476,7 +514,7 @@ class Reader:
     def _open_gates(self, project_id):
         return [{"id": row["id"], "kind": row["kind"],
                  "question": summary.truncate(row["question"], 160),
-                 "job_id": row["job_id"], "created_at": row["created_at"]}
+                 "job_id": row["job_id"], "goal_id": row["goal_id"], "created_at": row["created_at"]}
                 for row in self._rows(
                     "SELECT * FROM human_gates WHERE status = 'OPEN' AND project_id = ?"
                     " ORDER BY created_at", (project_id,))]
@@ -543,7 +581,7 @@ class Reader:
     # --- activity ---------------------------------------------------------
 
     def activity(self, project_key=None, limit=DEFAULT_ACTIVITY_LIMIT, before=None,
-                 kind=None):
+                 kind=None, workflow=None):
         """Chronological work log, reconstructed from durable state.
 
         Three durable sources are merged: job transitions (what moved), gate rows
@@ -562,9 +600,11 @@ class Reader:
         # Wider than the page so a group of entries sharing one timestamp can be
         # seen whole and the cursor can step past it cleanly.
         window = limit * 2 + TIE_WINDOW_SLACK
-        entries = (self._transition_entries(project["id"], before, window, kind)
-                   + self._gate_entries(project["id"], before, window, kind)
-                   + self._event_entries(project["id"], before, window, kind))
+        if workflow and workflow != 'unscoped':
+            self.workflow(project['id'], workflow)
+        entries = (self._transition_entries(project["id"], before, window, kind, workflow)
+                   + self._gate_entries(project["id"], before, window, kind, workflow)
+                   + self._event_entries(project["id"], before, window, kind, workflow))
         entries.sort(key=lambda entry: entry["at"], reverse=True)
         page = _page_on_a_clean_boundary(entries, limit)
         # A group of entries sharing one instant that is larger than the window
@@ -578,7 +618,7 @@ class Reader:
                 "has_more": len(entries) > len(page) or saturated,
                 "truncated_group": saturated}
 
-    def _transition_entries(self, project_id, before, window, kind):
+    def _transition_entries(self, project_id, before, window, kind, workflow=None):
         wanted = [status for status, row in ACTIVITY_TRANSITIONS.items()
                   if kind == ALL_KINDS or row[2] == kind]
         if not wanted:
@@ -588,6 +628,9 @@ class Reader:
                " FROM job_transitions t JOIN jobs j ON j.id = t.job_id"
                f" WHERE j.project_id = ? AND t.to_status IN ({', '.join('?' * len(wanted))})")
         params = [project_id, *wanted]
+        if workflow:
+            sql += " AND COALESCE(j.goal_id, 'unscoped') = ?"
+            params.append(workflow)
         if before:
             sql += " AND t.created_at < ?"
             params.append(before)
@@ -607,7 +650,7 @@ class Reader:
             })
         return entries
 
-    def _gate_entries(self, project_id, before, window, kind):
+    def _gate_entries(self, project_id, before, window, kind, workflow=None):
         """Gates raised and gates answered, as two queries.
 
         A decision is a separate moment from the question. Deriving both from
@@ -615,14 +658,17 @@ class Reader:
         unreachable: it sorts by when it was answered, but it could only be
         found by when it was asked.
         """
-        return (self._gate_opened_entries(project_id, before, window, kind)
-                + self._gate_decided_entries(project_id, before, window, kind))
+        return (self._gate_opened_entries(project_id, before, window, kind, workflow)
+                + self._gate_decided_entries(project_id, before, window, kind, workflow))
 
-    def _gate_opened_entries(self, project_id, before, window, kind):
+    def _gate_opened_entries(self, project_id, before, window, kind, workflow=None):
         if kind not in (ALL_KINDS, "gate"):
             return []
         sql = "SELECT * FROM human_gates WHERE project_id = ?"
         params = [project_id]
+        if workflow:
+            sql += " AND (goal_id = ? OR job_id IN (SELECT id FROM jobs WHERE COALESCE(goal_id, 'unscoped') = ?))"
+            params.extend([workflow, workflow])
         if before:
             sql += " AND created_at < ?"
             params.append(before)
@@ -635,7 +681,7 @@ class Reader:
             "job_id": row["job_id"], "role": None,
         } for row in self._rows(sql, params)]
 
-    def _gate_decided_entries(self, project_id, before, window, kind):
+    def _gate_decided_entries(self, project_id, before, window, kind, workflow=None):
         """Any gate carrying a decision, whatever the decision was called.
 
         Selecting only the two statuses known today would silently hide a
@@ -645,6 +691,9 @@ class Reader:
         known = tuple(DECIDED_GATE_KINDS)
         sql = "SELECT * FROM human_gates WHERE project_id = ? AND decided_at IS NOT NULL"
         params = [project_id]
+        if workflow:
+            sql += " AND (goal_id = ? OR job_id IN (SELECT id FROM jobs WHERE COALESCE(goal_id, 'unscoped') = ?))"
+            params.extend([workflow, workflow])
         if kind == ALL_KINDS:
             pass
         elif kind in DECIDED_GATE_KINDS.values():
@@ -672,7 +721,7 @@ class Reader:
             "job_id": row["job_id"], "role": None,
         } for row in self._rows(sql, params)]
 
-    def _event_entries(self, project_id, before, window, kind):
+    def _event_entries(self, project_id, before, window, kind, workflow=None):
         wanted = [name for name, row in ACTIVITY_EVENTS.items()
                   if kind == ALL_KINDS or row[2] == kind]
         if not wanted:
@@ -680,6 +729,9 @@ class Reader:
         sql = ("SELECT * FROM events WHERE project_id = ?"
                f" AND kind IN ({', '.join('?' * len(wanted))})")
         params = [project_id, *wanted]
+        if workflow:
+            sql += " AND job_id IN (SELECT id FROM jobs WHERE COALESCE(goal_id, 'unscoped') = ?)"
+            params.append(workflow)
         if before:
             sql += " AND created_at < ?"
             params.append(before)
