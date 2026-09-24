@@ -7,9 +7,6 @@ yours. State lives in SQLite, not in the conversation.
 
 ![DevSupervisor dashboard with workflow navigation, parallel builders, completed work, an active independent review, and the task inspector](docs/images/dashboard-graph.png)
 
-*Example workflow with fictional demo data: completed work, active builders,
-and an independent review in progress.*
-
 ## Quick start
 
 ```bash
